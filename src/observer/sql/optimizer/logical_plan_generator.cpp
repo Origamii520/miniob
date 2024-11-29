@@ -95,16 +95,6 @@ RC LogicalPlanGenerator::create(Stmt *stmt, unique_ptr<LogicalOperator> &logical
       }
       return RC::UNIMPLEMENTED;
     } break;
-
-    case StmtType::CREATE_VIEW: {
-      auto *create_view_stmt = static_cast<CreateViewStmt *>(stmt);
-      if (create_view_stmt->select_stmt() != nullptr) {
-        // create view xx as select ...
-        auto stmt_ = create_view_stmt->select_stmt();
-        return create_plan(stmt_, logical_operator);
-      }
-      return RC::UNIMPLEMENTED;
-    } break;
     default: {
       rc = RC::UNIMPLEMENTED;
     }

@@ -25,7 +25,6 @@ See the Mulan PSL v2 for more details. */
 #include "event/sql_event.h"
 #include "sql/operator/logical_operator.h"
 #include "sql/stmt/create_table_stmt.h"
-#include "sql/stmt/create_view_stmt.h"
 #include "sql/stmt/stmt.h"
 #include "storage/db/db.h"
 
@@ -69,11 +68,6 @@ RC OptimizeStage::handle_request(SQLStageEvent *sql_event)
       create_table_stmt->set_physical_operator(std::move(sql_event->physical_operator()));
     }
   } else if (stmt->type() == StmtType::CREATE_VIEW) {
-    // create view set physical oper
-    auto *create_view_stmt = static_cast<CreateViewStmt *>(stmt);
-    if (create_view_stmt->select_stmt() != nullptr) {
-      create_view_stmt->set_physical_operator(std::move(sql_event->physical_operator()));
-    }
   }
 
   handle_view_request(sql_event);

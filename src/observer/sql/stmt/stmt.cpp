@@ -82,10 +82,6 @@ RC Stmt::create_stmt(Db *db, ParsedSqlNode &sql_node, Stmt *&stmt)
       return CreateTableStmt::create(db, sql_node.create_table, stmt);
     }
 
-    case SCF_CREATE_VIEW: {
-      return CreateViewStmt::create(db, sql_node.create_view, stmt);
-    }
-
     case SCF_DESC_TABLE: {
       return DescTableStmt::create(db, sql_node.desc_table, stmt);
     }
