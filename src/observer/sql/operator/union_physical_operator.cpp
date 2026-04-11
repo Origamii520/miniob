@@ -59,7 +59,7 @@ RC UnionPhysicalOperator::consume_child(PhysicalOperator &child)
       return rc;
     }
 
-    if (!tuple_exists(tuples_, value_list_tuple)) {
+    if (all_ || !tuple_exists(tuples_, value_list_tuple)) {
       tuples_.emplace_back(std::make_unique<ValueListTuple>(std::move(value_list_tuple)));
     }
   }

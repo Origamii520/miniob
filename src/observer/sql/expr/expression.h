@@ -52,6 +52,7 @@ enum class ExprType
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
   AGGREGATION,  ///< 聚合运算
+  FUNCTION,     ///< 标量函数
   LIKE,          ///<  字符串匹配
   VECTOR_DISTANCE_EXPR,  ///< 向量距离表达式(内含三种距离计算方式)
   IS              ,       ///< IS 语句
@@ -515,6 +516,41 @@ private:
   bool                        is_like_;  // true 表示 LIKE, false 表示 NOT LIKE
   std::unique_ptr<Expression> sExpr_;
   std::unique_ptr<Expression> pExpr_;
+};
+
+class FunctionExpr : public Expression
+{
+public:
+  enum class Type
+  {
+    LENGTH,
+    STRING_TO_VECTOR,
+    TOKENIZE,
+    VECTOR_TO_STRING,
+  };
+
+  FunctionExpr(Type type, std::vector<std::unique_ptr<Expression>> &&args);
+  FunctionExpr(Type type, std::vector<std::unique_ptr<Expression>> &args);
+  ~FunctionExpr() override = default;
+
+  ExprType type() const override { return ExprType::FUNCTION; }
+  AttrType value_type() const override;
+  int      value_length() const override;
+
+  RC get_value(const Tuple &tuple, Value &value, Trx *trx = nullptr) const override;
+  RC try_get_value(Value &value) const override;
+
+  Type function_type() const { return function_type_; }
+
+  std::vector<std::unique_ptr<Expression>> &args() { return args_; }
+  const std::vector<std::unique_ptr<Expression>> &args() const { return args_; }
+
+private:
+  RC evaluate(const std::vector<Value> &args, Value &value) const;
+
+private:
+  Type                                     function_type_;
+  std::vector<std::unique_ptr<Expression>> args_;
 };
 
 class VectorDistanceExpr : public Expression

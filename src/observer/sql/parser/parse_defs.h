@@ -214,8 +214,16 @@ struct CreateTableSqlNode
 
 struct AlterTableSqlNode
 {
+  enum class Operation
+  {
+    ADD_COLUMN,
+    DROP_COLUMN,
+  };
+
   std::string   relation_name;
+  Operation     operation = Operation::ADD_COLUMN;
   AttrInfoSqlNode attr_info;
+  std::string   column_name;
 };
 
 /**
@@ -271,6 +279,7 @@ struct UnionSqlNode
 {
   SubSelectSqlNode *left_select  = nullptr;
   SubSelectSqlNode *right_select = nullptr;
+  bool              all          = false;
 };
 
 /**

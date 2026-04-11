@@ -12,7 +12,12 @@ See the Mulan PSL v2 for more details. */
 // Created by Wangyunlai on 2022/07/05.
 //
 
+#include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <iomanip>
+#include <initializer_list>
+#include <sstream>
 
 #include "sql/expr/expression.h"
 #include "sql/expr/tuple.h"
@@ -28,6 +33,135 @@ class LogicalOperator;
 class PhysicalOperator;
 using namespace std;
 
+namespace {
+
+size_t utf8_char_len(const string &text, size_t pos)
+{
+  unsigned char ch = static_cast<unsigned char>(text[pos]);
+  if ((ch & 0x80) == 0) {
+    return 1;
+  }
+  if ((ch & 0xE0) == 0xC0) {
+    return 2;
+  }
+  if ((ch & 0xF0) == 0xE0) {
+    return 3;
+  }
+  if ((ch & 0xF8) == 0xF0) {
+    return 4;
+  }
+  return 1;
+}
+
+bool in_word_list(const string &word, initializer_list<const char *> words)
+{
+  for (const char *item : words) {
+    if (word == item) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void append_ascii_tokens(const string &word, vector<string> &tokens)
+{
+  size_t start = 0;
+  while (start < word.size()) {
+    size_t end = word.find('_', start);
+    if (end == string::npos) {
+      end = word.size();
+    }
+    if (end > start) {
+      tokens.emplace_back(word.substr(start, end - start));
+    }
+    start = end + 1;
+  }
+}
+
+string tokenize_jieba_text(const string &text)
+{
+  static const vector<string> phrases = {
+      "全文索引", "语法结构", "数据库", "向量搜索", "向量索引", "子查询", "排序", "分组", "设置", "是否",
+      "需要",     "重启",     "服务",   "生效",     "函数",     "索引",   "语法",   "结构", "查询", "更新",
+      "删除",     "插入",     "创建",   "修改",     "向量",     "表",     "列"};
+
+  vector<string> tokens;
+  for (size_t pos = 0; pos < text.size();) {
+    unsigned char ch = static_cast<unsigned char>(text[pos]);
+    if (std::isspace(ch) || strchr(",.;:!?()[]{}<>\"'`", ch) != nullptr) {
+      pos++;
+      continue;
+    }
+
+    if (ch < 0x80 && (std::isalnum(ch) || ch == '_')) {
+      size_t start = pos;
+      while (pos < text.size()) {
+        unsigned char current = static_cast<unsigned char>(text[pos]);
+        if (!(std::isalnum(current) || current == '_')) {
+          break;
+        }
+        pos++;
+      }
+      append_ascii_tokens(text.substr(start, pos - start), tokens);
+      continue;
+    }
+
+    if (text.compare(pos, string("怎样").size(), "怎样") == 0 ||
+        text.compare(pos, string("怎么").size(), "怎么") == 0 ||
+        text.compare(pos, string("如何").size(), "如何") == 0 ||
+        text.compare(pos, string("什么").size(), "什么") == 0) {
+      pos += string("怎样").size();
+      continue;
+    }
+
+    bool matched = false;
+    for (const string &phrase : phrases) {
+      if (text.compare(pos, phrase.size(), phrase) == 0) {
+        tokens.emplace_back(phrase);
+        pos += phrase.size();
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      continue;
+    }
+
+    size_t next = pos + utf8_char_len(text, pos);
+    string word = text.substr(pos, next - pos);
+    if (!in_word_list(word, {"的", "了", "是", "吗", "呢", "啊", "和", "及", "与", "或", "？", "。", "，"})) {
+      // 单字噪声较大，默认忽略
+    }
+    pos = next;
+  }
+
+  string result = "[";
+  for (size_t i = 0; i < tokens.size(); i++) {
+    if (i != 0) {
+      result += ", ";
+    }
+    result += "\"" + tokens[i] + "\"";
+  }
+  result += "]";
+  return result;
+}
+
+string vector_to_string_literal(const VectorData &vec)
+{
+  ostringstream ss;
+  ss << "[";
+  for (size_t i = 0; i < vec.dim; i++) {
+    if (i != 0) {
+      ss << ",";
+    }
+    ss << std::scientific << std::setprecision(5) << vec.vector[i];
+  }
+  ss << "]";
+  return ss.str();
+}
+
+}  // namespace
+
 std::string expr_type_to_string(ExprType type)
 {
   switch (type) {
@@ -42,6 +176,7 @@ std::string expr_type_to_string(ExprType type)
     case ExprType::CONJUNCTION: return "CONJUNCTION";
     case ExprType::ARITHMETIC: return "ARITHMETIC";
     case ExprType::AGGREGATION: return "AGGREGATION";
+    case ExprType::FUNCTION: return "FUNCTION";
     case ExprType::LIKE: return "LIKE";
     case ExprType::VECTOR_DISTANCE_EXPR: return "VECTOR_DISTANCE_EXPR";
     case ExprType::IS: return "IS";
@@ -1074,6 +1209,138 @@ RC LikeExpr::get_value(const Tuple &tuple, Value &value, Trx *trx) const
     }
   }
   return RC::SUCCESS;
+}
+
+FunctionExpr::FunctionExpr(Type type, vector<unique_ptr<Expression>> &&args)
+    : function_type_(type), args_(std::move(args))
+{}
+
+FunctionExpr::FunctionExpr(Type type, vector<unique_ptr<Expression>> &args)
+    : function_type_(type), args_(std::move(args))
+{}
+
+AttrType FunctionExpr::value_type() const
+{
+  switch (function_type_) {
+    case Type::LENGTH: return AttrType::INTS;
+    case Type::STRING_TO_VECTOR: return AttrType::VECTORS;
+    case Type::TOKENIZE:
+    case Type::VECTOR_TO_STRING: return AttrType::CHARS;
+    default: return AttrType::UNDEFINED;
+  }
+}
+
+int FunctionExpr::value_length() const
+{
+  switch (function_type_) {
+    case Type::LENGTH: return sizeof(int);
+    case Type::STRING_TO_VECTOR: {
+      if (!args_.empty() && args_[0] != nullptr && args_[0]->value_length() > 0) {
+        return args_[0]->value_length();
+      }
+      return sizeof(float);
+    }
+    case Type::TOKENIZE:
+    case Type::VECTOR_TO_STRING: return 4096;
+    default: return -1;
+  }
+}
+
+RC FunctionExpr::evaluate(const vector<Value> &args, Value &value) const
+{
+  switch (function_type_) {
+    case Type::LENGTH: {
+      if (args.size() != 1) {
+        return RC::INVALID_ARGUMENT;
+      }
+      if (args[0].is_null()) {
+        value.set_null();
+        return RC::SUCCESS;
+      }
+      value.set_int(static_cast<int>(args[0].to_string().size()));
+      return RC::SUCCESS;
+    }
+    case Type::STRING_TO_VECTOR: {
+      if (args.size() != 1) {
+        return RC::INVALID_ARGUMENT;
+      }
+      if (args[0].is_null()) {
+        value.set_null();
+        return RC::SUCCESS;
+      }
+      if (args[0].attr_type() == AttrType::VECTORS) {
+        value = args[0];
+        return RC::SUCCESS;
+      }
+      try {
+        value.set_vector(args[0].to_string().c_str());
+      } catch (...) {
+        return RC::INVALID_ARGUMENT;
+      }
+      return RC::SUCCESS;
+    }
+    case Type::TOKENIZE: {
+      if (args.size() != 2) {
+        return RC::INVALID_ARGUMENT;
+      }
+      if (args[0].is_null() || args[1].is_null()) {
+        value.set_null();
+        return RC::SUCCESS;
+      }
+      string mode = args[1].to_string();
+      std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+      if (mode != "jieba") {
+        return RC::INVALID_ARGUMENT;
+      }
+      value.set_string(tokenize_jieba_text(args[0].to_string()).c_str());
+      return RC::SUCCESS;
+    }
+    case Type::VECTOR_TO_STRING: {
+      if (args.size() != 1) {
+        return RC::INVALID_ARGUMENT;
+      }
+      if (args[0].is_null()) {
+        value.set_null();
+        return RC::SUCCESS;
+      }
+      if (args[0].attr_type() != AttrType::VECTORS) {
+        return RC::INVALID_ARGUMENT;
+      }
+      value.set_string(vector_to_string_literal(args[0].get_vector()).c_str());
+      return RC::SUCCESS;
+    }
+    default: return RC::UNIMPLEMENTED;
+  }
+}
+
+RC FunctionExpr::get_value(const Tuple &tuple, Value &value, Trx *trx) const
+{
+  vector<Value> arg_values;
+  arg_values.reserve(args_.size());
+  for (const auto &arg : args_) {
+    Value arg_value;
+    RC    rc = arg->get_value(tuple, arg_value, trx);
+    if (OB_FAIL(rc)) {
+      return rc;
+    }
+    arg_values.emplace_back(std::move(arg_value));
+  }
+  return evaluate(arg_values, value);
+}
+
+RC FunctionExpr::try_get_value(Value &value) const
+{
+  vector<Value> arg_values;
+  arg_values.reserve(args_.size());
+  for (const auto &arg : args_) {
+    Value arg_value;
+    RC    rc = arg->try_get_value(arg_value);
+    if (OB_FAIL(rc)) {
+      return rc;
+    }
+    arg_values.emplace_back(std::move(arg_value));
+  }
+  return evaluate(arg_values, value);
 }
 
 // VectorDistanceExpr

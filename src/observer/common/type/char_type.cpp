@@ -23,6 +23,7 @@ bool valid_date_literal(const char *literal)
   }
 
   int  parts[3]   = {0, 0, 0};
+  int  digits[3]  = {0, 0, 0};
   int  part_index = 0;
   int  current    = 0;
   bool has_digit  = false;
@@ -31,6 +32,13 @@ bool valid_date_literal(const char *literal)
     if (*p >= '0' && *p <= '9') {
       has_digit = true;
       current   = current * 10 + (*p - '0');
+      if (part_index >= 3) {
+        return false;
+      }
+      digits[part_index]++;
+      if ((part_index == 0 && digits[part_index] > 4) || (part_index > 0 && digits[part_index] > 2)) {
+        return false;
+      }
       continue;
     }
 
@@ -51,6 +59,9 @@ bool valid_date_literal(const char *literal)
   }
 
   if (part_index != 3) {
+    return false;
+  }
+  if (digits[0] != 4 || digits[1] < 1 || digits[1] > 2 || digits[2] < 1 || digits[2] > 2) {
     return false;
   }
 

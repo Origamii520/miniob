@@ -30,23 +30,98 @@ public:
   explicit MaterializedRowTuple(const RowTuple &source)
   {
     record_ = source.record();
-    tuple_.set_schema(source.table(), source.table()->table_meta().field_metas());
-    tuple_.set_record(&record_);
-    tuple_.set_rid(source.raw_rid());
-    tuple_.set_table_name(source.raw_table_name());
-    tuple_.table_alias_     = source.table_alias_;
-    tuple_.rid_list_        = source.rid_list_;
-    tuple_.table_name_list_ = source.table_name_list_;
+    table_  = source.table();
+    fields_ = source.table()->table_meta().field_metas();
+    null_bitmap_start_ = 0;
+    for (const auto &trx_field : table_->table_meta().trx_fields()) {
+      null_bitmap_start_ += trx_field.len();
+    }
+    bitmap_ = std::make_unique<Bitmap>(record_.data() + null_bitmap_start_, fields_->size());
+
+    set_rid(source.raw_rid());
+    set_table_name(source.raw_table_name());
+    table_alias_     = source.table_alias_;
+    rid_list_        = source.rid_list_;
+    table_name_list_ = source.table_name_list_;
   }
 
-  int cell_num() const override { return tuple_.cell_num(); }
-  RC  cell_at(int index, Value &cell) const override { return tuple_.cell_at(index, cell); }
-  RC  spec_at(int index, TupleCellSpec &spec) const override { return tuple_.spec_at(index, spec); }
-  RC  find_cell(const TupleCellSpec &spec, Value &cell) const override { return tuple_.find_cell(spec, cell); }
+  int cell_num() const override { return static_cast<int>(fields_->size()); }
+
+  RC cell_at(int index, Value &cell) const override
+  {
+    if (index < 0 || index >= static_cast<int>(fields_->size())) {
+      LOG_WARN("invalid argument. index=%d", index);
+      return RC::INVALID_ARGUMENT;
+    }
+
+    const FieldMeta &field_meta = (*fields_)[index];
+    if (bitmap_->get_bit(index)) {
+      cell.set_null();
+      return RC::SUCCESS;
+    }
+    if (field_meta.type() == AttrType::TEXTS) {
+      TextData text_data;
+      memcpy(&text_data, record_.data() + field_meta.offset(), field_meta.len());
+      table_->load_text(&text_data);
+      cell.set_type(AttrType::TEXTS);
+      cell.set_text(text_data.str, text_data.len, true);
+    } else if (field_meta.type() == AttrType::VECTORS) {
+      VectorData vector_data;
+      memcpy(&vector_data, record_.data() + field_meta.offset(), field_meta.len());
+      table_->load_vector(&vector_data);
+      cell.set_type(AttrType::VECTORS);
+      cell.set_vector(vector_data, true);
+    } else {
+      cell.set_type(field_meta.type());
+      cell.set_data(record_.data() + field_meta.offset(), field_meta.len());
+    }
+
+    cell.view_set_info(raw_rid().page_num, raw_rid().slot_num, raw_table_name());
+    return RC::SUCCESS;
+  }
+
+  RC spec_at(int index, TupleCellSpec &spec) const override
+  {
+    if (index < 0 || index >= static_cast<int>(fields_->size())) {
+      LOG_WARN("invalid argument. index=%d", index);
+      return RC::INVALID_ARGUMENT;
+    }
+    spec = TupleCellSpec(table_->name(), (*fields_)[index].name());
+    return RC::SUCCESS;
+  }
+
+  RC find_cell(const TupleCellSpec &spec, Value &cell) const override
+  {
+    const char *table_name = spec.table_name();
+    const char *field_name = spec.field_name();
+
+    if (0 != strcmp(table_name, table_->name())) {
+      return RC::NOTFOUND;
+    }
+
+    auto spec_table_alias = spec.table_alias();
+    if (!spec_table_alias.empty() && !table_alias_.empty() && table_alias_ != spec_table_alias) {
+      return RC::NOTFOUND;
+    }
+
+    for (size_t i = 0; i < fields_->size(); ++i) {
+      if (0 == strcmp(field_name, (*fields_)[i].name())) {
+        return cell_at(static_cast<int>(i), cell);
+      }
+    }
+    return RC::NOTFOUND;
+  }
 
 private:
-  Record   record_;
-  RowTuple tuple_;
+  const Table                  *table_ = nullptr;
+  const std::vector<FieldMeta> *fields_ = nullptr;
+  int                           null_bitmap_start_ = 0;
+  std::unique_ptr<Bitmap>       bitmap_;
+  Record                        record_;
+
+public:
+  std::vector<RID>         rid_list_;
+  std::vector<std::string> table_name_list_;
 };
 
 class MaterializedJoinedTuple final : public Tuple

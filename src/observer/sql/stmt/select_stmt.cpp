@@ -43,6 +43,15 @@ bool contains_aggregate_in_filter_expr(Expression *expr)
       return contains_aggregate_in_filter_expr(arithmetic_expr->left().get()) ||
              contains_aggregate_in_filter_expr(arithmetic_expr->right().get());
     }
+    case ExprType::FUNCTION: {
+      auto *function_expr = static_cast<FunctionExpr *>(expr);
+      for (const auto &arg : function_expr->args()) {
+        if (contains_aggregate_in_filter_expr(arg.get())) {
+          return true;
+        }
+      }
+      return false;
+    }
     case ExprType::LIKE: {
       auto *like_expr = static_cast<LikeExpr *>(expr);
       return contains_aggregate_in_filter_expr(like_expr->sExpr().get()) ||
@@ -78,12 +87,11 @@ SelectStmt::~SelectStmt()
 RC SelectStmt::convert_alias_to_name(Expression *expr, 
 std::shared_ptr<std::unordered_map<string, string>> alias2name,
 std::shared_ptr<std::unordered_map<string, string>> field_alias2name) {
-   if (expr->type() == ExprType::VALUE || 
+  if (expr->type() == ExprType::VALUE || 
    expr->type() == ExprType::SUB_QUERY || 
    expr->type() == ExprType::SPECIAL_PLACEHOLDER ||
    expr->type() == ExprType::VALUES ||
-   expr->type() == ExprType::STAR ||
-   expr->type() == ExprType::VECTOR_DISTANCE_EXPR){
+   expr->type() == ExprType::STAR){
     // select * from table_alias_1 t1 where id in (select t2.id from table_alias_2 t2 where t2.col2 >= t1.col1);
     // subquery 单独处理
     return RC::SUCCESS;
@@ -103,6 +111,31 @@ std::shared_ptr<std::unordered_map<string, string>> field_alias2name) {
         LOG_WARN("failed to check parent relation");
         return rc;
       }
+    }
+    return RC::SUCCESS;
+  }
+  if (expr->type() == ExprType::FUNCTION) {
+    auto *function_expr = static_cast<FunctionExpr *>(expr);
+    for (auto &arg : function_expr->args()) {
+      RC rc = SelectStmt::convert_alias_to_name(arg.get(), alias2name, field_alias2name);
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to check parent relation");
+        return rc;
+      }
+    }
+    return RC::SUCCESS;
+  }
+  if (expr->type() == ExprType::VECTOR_DISTANCE_EXPR) {
+    auto *distance_expr = static_cast<VectorDistanceExpr *>(expr);
+    RC rc = SelectStmt::convert_alias_to_name(distance_expr->left().get(), alias2name, field_alias2name);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to check parent relation");
+      return rc;
+    }
+    rc = SelectStmt::convert_alias_to_name(distance_expr->right().get(), alias2name, field_alias2name);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to check parent relation");
+      return rc;
     }
     return RC::SUCCESS;
   }

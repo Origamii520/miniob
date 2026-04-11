@@ -242,7 +242,7 @@ RC LogicalPlanGenerator::create_plan(UnionStmt *union_stmt, unique_ptr<LogicalOp
     return rc;
   }
 
-  auto union_logical_operator = std::make_unique<UnionLogicalOperator>();
+  auto union_logical_operator = std::make_unique<UnionLogicalOperator>(union_stmt->all());
   union_logical_operator->add_child(std::move(left_logical_operator));
   union_logical_operator->add_child(std::move(right_logical_operator));
   logical_operator = std::move(union_logical_operator);

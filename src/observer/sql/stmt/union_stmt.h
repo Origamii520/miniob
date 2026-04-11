@@ -11,8 +11,9 @@ class Db;
 class UnionStmt : public Stmt
 {
 public:
-  UnionStmt(std::unique_ptr<SelectStmt> left_stmt, std::unique_ptr<SelectStmt> right_stmt, std::vector<AttrType> value_types)
-      : left_stmt_(std::move(left_stmt)), right_stmt_(std::move(right_stmt)), value_types_(std::move(value_types))
+  UnionStmt(std::unique_ptr<SelectStmt> left_stmt, std::unique_ptr<SelectStmt> right_stmt,
+      std::vector<AttrType> value_types, bool all)
+      : left_stmt_(std::move(left_stmt)), right_stmt_(std::move(right_stmt)), value_types_(std::move(value_types)), all_(all)
   {}
   ~UnionStmt() override = default;
 
@@ -21,6 +22,7 @@ public:
   SelectStmt                  *left_stmt() const { return left_stmt_.get(); }
   SelectStmt                  *right_stmt() const { return right_stmt_.get(); }
   const std::vector<AttrType> &value_types() const { return value_types_; }
+  bool                         all() const { return all_; }
 
   static RC create(Db *db, const UnionSqlNode &sql_node, Stmt *&stmt);
 
@@ -28,4 +30,5 @@ private:
   std::unique_ptr<SelectStmt> left_stmt_;
   std::unique_ptr<SelectStmt> right_stmt_;
   std::vector<AttrType>       value_types_;
+  bool                        all_ = false;
 };

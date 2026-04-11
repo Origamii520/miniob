@@ -53,6 +53,53 @@ UnboundAggregateExpr *create_aggregate_expression(AggregateType type,
   return expr;
 }
 
+FunctionExpr *create_function_expression(
+    FunctionExpr::Type type, initializer_list<Expression *> args, const char *sql_string, YYLTYPE *llocp)
+{
+  vector<unique_ptr<Expression>> function_args;
+  function_args.reserve(args.size());
+  for (Expression *arg : args) {
+    function_args.emplace_back(arg);
+  }
+  auto *expr = new FunctionExpr(type, std::move(function_args));
+  expr->set_name(token_name(sql_string, llocp));
+  return expr;
+}
+
+Expression *create_invalid_expression(const char *sql_string, YYLTYPE *llocp)
+{
+  auto *expr = new ValueExpr(Value());
+  expr->set_name(token_name(sql_string, llocp));
+  return expr;
+}
+
+Expression *create_distance_expression(Expression *left, Expression *right, Value *mode, const char *sql_string, YYLTYPE *llocp)
+{
+  if (mode == nullptr || mode->is_null() || mode->attr_type() != AttrType::CHARS) {
+    return create_invalid_expression(sql_string, llocp);
+  }
+
+  string mode_name = mode->to_string();
+  transform(mode_name.begin(), mode_name.end(), mode_name.begin(), [](unsigned char ch) {
+    return static_cast<char>(toupper(ch));
+  });
+
+  VectorDistanceExpr::Type distance_type;
+  if (mode_name == "EUCLIDEAN" || mode_name == "L2" || mode_name == "L2_DISTANCE") {
+    distance_type = VectorDistanceExpr::Type::L2_DISTANCE;
+  } else if (mode_name == "COSINE" || mode_name == "COSINE_DISTANCE") {
+    distance_type = VectorDistanceExpr::Type::COSINE_DISTANCE;
+  } else if (mode_name == "INNER_PRODUCT") {
+    distance_type = VectorDistanceExpr::Type::INNER_PRODUCT;
+  } else {
+    return create_invalid_expression(sql_string, llocp);
+  }
+
+  auto *expr = new VectorDistanceExpr(distance_type, left, right);
+  expr->set_name(token_name(sql_string, llocp));
+  return expr;
+}
+
 Value *create_length_value(Value *arg)
 {
   auto *value = new Value();
@@ -114,8 +161,9 @@ string tokenize_jieba_literal(const string &text)
 {
   static const vector<string> phrases = {
       "全文索引", "语法结构", "数据库", "向量搜索", "向量索引", "子查询", "排序", "分组",
-      "函数", "索引", "语法", "结构", "查询", "更新", "删除", "插入", "创建", "修改",
-      "向量", "表", "列"};
+      "设置",     "是否",     "需要",   "重启",     "服务",     "生效",   "函数", "索引",
+      "语法",     "结构",     "查询",   "更新",     "删除",     "插入",   "创建", "修改",
+      "向量",     "表",       "列"};
 
   vector<string> tokens;
   for (size_t pos = 0; pos < text.size();) {
@@ -134,7 +182,18 @@ string tokenize_jieba_literal(const string &text)
         }
         pos++;
       }
-      tokens.emplace_back(text.substr(start, pos - start));
+      string ascii_word = text.substr(start, pos - start);
+      size_t split_start = 0;
+      while (split_start < ascii_word.size()) {
+        size_t split_end = ascii_word.find('_', split_start);
+        if (split_end == string::npos) {
+          split_end = ascii_word.size();
+        }
+        if (split_end > split_start) {
+          tokens.emplace_back(ascii_word.substr(split_start, split_end - split_start));
+        }
+        split_start = split_end + 1;
+      }
       continue;
     }
 
@@ -292,6 +351,9 @@ Value *create_tokenize_value(Value *text_value, Value *mode_value)
         LIMIT
         WITH
         UNION
+        ALL
+        VECTOR_TO_STRING
+        DISTANCE
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -663,6 +725,7 @@ alter_table_stmt:
     {
       $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
       $$->alter_table.relation_name = $3;
+      $$->alter_table.operation = AlterTableSqlNode::Operation::ADD_COLUMN;
       $$->alter_table.attr_info = *$6;
       free($3);
       delete $6;
@@ -671,9 +734,28 @@ alter_table_stmt:
     {
       $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
       $$->alter_table.relation_name = $3;
+      $$->alter_table.operation = AlterTableSqlNode::Operation::ADD_COLUMN;
       $$->alter_table.attr_info = *$5;
       free($3);
       delete $5;
+    }
+    | ALTER TABLE ID DROP COLUMN ID
+    {
+      $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
+      $$->alter_table.relation_name = $3;
+      $$->alter_table.operation = AlterTableSqlNode::Operation::DROP_COLUMN;
+      $$->alter_table.column_name = $6;
+      free($3);
+      free($6);
+    }
+    | ALTER TABLE ID DROP ID
+    {
+      $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
+      $$->alter_table.relation_name = $3;
+      $$->alter_table.operation = AlterTableSqlNode::Operation::DROP_COLUMN;
+      $$->alter_table.column_name = $5;
+      free($3);
+      free($5);
     }
     ;
 
@@ -1066,6 +1148,14 @@ union_stmt:
       $$ = new ParsedSqlNode(SCF_UNION);
       $$->union_sql.left_select = $1;
       $$->union_sql.right_select = $3;
+      $$->union_sql.all = false;
+    }
+    | select_stmt UNION ALL select_stmt
+    {
+      $$ = new ParsedSqlNode(SCF_UNION);
+      $$->union_sql.left_select = $1;
+      $$->union_sql.right_select = $4;
+      $$->union_sql.all = true;
     }
     ;
 
@@ -1148,6 +1238,27 @@ expression:
     | SUM LBRACE expression RBRACE
     {
       $$ = create_aggregate_expression(AggregateType::SUM, $3, sql_string, &@$);
+    }
+    | LENGTH LBRACE expression RBRACE
+    {
+      $$ = create_function_expression(FunctionExpr::Type::LENGTH, {$3}, sql_string, &@$);
+    }
+    | STRING_TO_VECTOR LBRACE expression RBRACE
+    {
+      $$ = create_function_expression(FunctionExpr::Type::STRING_TO_VECTOR, {$3}, sql_string, &@$);
+    }
+    | TOKENIZE LBRACE expression COMMA expression RBRACE
+    {
+      $$ = create_function_expression(FunctionExpr::Type::TOKENIZE, {$3, $5}, sql_string, &@$);
+    }
+    | VECTOR_TO_STRING LBRACE expression RBRACE
+    {
+      $$ = create_function_expression(FunctionExpr::Type::VECTOR_TO_STRING, {$3}, sql_string, &@$);
+    }
+    | DISTANCE LBRACE expression COMMA expression COMMA value RBRACE
+    {
+      $$ = create_distance_expression($3, $5, $7, sql_string, &@$);
+      delete $7;
     }
     | expression '+' expression {
       $$ = create_arithmetic_expression(ArithmeticExpr::Type::ADD, $1, $3, sql_string, &@$);

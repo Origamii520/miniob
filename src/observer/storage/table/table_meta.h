@@ -44,6 +44,7 @@ public:
       std::span<const AttrInfoSqlNode> attributes, StorageFormat storage_format);
 
   RC add_field(const AttrInfoSqlNode &attr_info);
+  RC drop_field(const char *field_name);
   RC add_index(const IndexMeta &index);
   RC drop_index(const char *index_name);
   RC add_vector_index(const VectorIndexMeta &vector_index_meta);

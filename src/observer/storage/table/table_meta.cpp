@@ -190,6 +190,76 @@ RC TableMeta::add_field(const AttrInfoSqlNode &attr_info)
   return RC::SUCCESS;
 }
 
+RC TableMeta::drop_field(const char *field_name)
+{
+  if (common::is_blank(field_name)) {
+    LOG_WARN("field name cannot be empty");
+    return RC::INVALID_ARGUMENT;
+  }
+
+  const FieldMeta *field_meta = field(field_name);
+  if (field_meta == nullptr || !field_meta->visible()) {
+    LOG_WARN("field does not exist. table=%s, field=%s", name(), field_name);
+    return RC::SCHEMA_FIELD_NOT_EXIST;
+  }
+
+  const int visible_fields = static_cast<int>(fields_.size()) - sys_field_num();
+  if (visible_fields <= 1) {
+    LOG_WARN("cannot drop the last visible field. table=%s, field=%s", name(), field_name);
+    return RC::INVALID_ARGUMENT;
+  }
+
+  const int new_bitmap_bytes = static_cast<int>(std::ceil((visible_fields - 1) / 8.0));
+
+  std::vector<FieldMeta> new_fields;
+  new_fields.reserve(fields_.size() - 1);
+
+  for (int i = 0; i < sys_field_num(); i++) {
+    new_fields.push_back(fields_[i]);
+  }
+
+  int next_offset = 0;
+  if (!new_fields.empty()) {
+    const FieldMeta &last_sys_field = new_fields.back();
+    next_offset = last_sys_field.offset() + last_sys_field.len();
+  }
+  null_bitmap_start_ = next_offset;
+  next_offset += new_bitmap_bytes;
+
+  int next_field_id = sys_field_num();
+  for (size_t i = sys_field_num(); i < fields_.size(); i++) {
+    const FieldMeta &old_field_meta = fields_[i];
+    if (strcmp(old_field_meta.name(), field_name) == 0) {
+      continue;
+    }
+
+    FieldMeta new_field_meta;
+    RC        rc = new_field_meta.init(old_field_meta.name(),
+           old_field_meta.type(),
+           next_offset,
+           old_field_meta.len(),
+           old_field_meta.visible(),
+           next_field_id,
+           old_field_meta.nullable(),
+           old_field_meta.vector_dim());
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to rebuild field meta while dropping field. table=%s, field=%s, rc=%s",
+          name(),
+          old_field_meta.name(),
+          strrc(rc));
+      return rc;
+    }
+    new_field_meta.table_name_ = old_field_meta.table_name_;
+    new_fields.push_back(new_field_meta);
+    next_offset += new_field_meta.len();
+    next_field_id++;
+  }
+
+  fields_.swap(new_fields);
+  record_size_ = next_offset;
+  return RC::SUCCESS;
+}
+
 RC TableMeta::add_index(const IndexMeta &index)
 {
   indexes_.push_back(index);

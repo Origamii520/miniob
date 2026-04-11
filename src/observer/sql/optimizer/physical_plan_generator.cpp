@@ -678,7 +678,7 @@ RC PhysicalPlanGenerator::create_plan(UnionLogicalOperator &logical_operator, st
     return RC::INVALID_ARGUMENT;
   }
 
-  auto union_physical_operator = std::make_unique<UnionPhysicalOperator>();
+  auto union_physical_operator = std::make_unique<UnionPhysicalOperator>(logical_operator.all());
   auto children                = std::move(logical_operator.children());
   for (auto &child : children) {
     std::unique_ptr<PhysicalOperator> child_oper;

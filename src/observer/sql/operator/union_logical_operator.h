@@ -5,8 +5,12 @@
 class UnionLogicalOperator : public LogicalOperator
 {
 public:
-  UnionLogicalOperator()          = default;
+  explicit UnionLogicalOperator(bool all = false) : all_(all) {}
   ~UnionLogicalOperator() override = default;
 
   LogicalOperatorType type() const override { return LogicalOperatorType::UNION; }
+  bool                all() const { return all_; }
+
+private:
+  bool all_ = false;
 };

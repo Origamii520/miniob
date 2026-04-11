@@ -126,6 +126,10 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
       return bind_aggregate_expression(expr, bound_expressions);
     } break;
 
+    case ExprType::FUNCTION: {
+      return bind_function_expression(expr, bound_expressions);
+    } break;
+
     case ExprType::LIKE: {
       return bind_like_expression(expr, bound_expressions);
     } break;
@@ -581,6 +585,45 @@ RC ExpressionBinder::bind_aggregate_expression(
   }
 
   bound_expressions.emplace_back(std::move(aggregate_expr));
+  return RC::SUCCESS;
+}
+
+RC ExpressionBinder::bind_function_expression(
+    std::unique_ptr<Expression> &expr, std::vector<std::unique_ptr<Expression>> &bound_expressions)
+{
+  if (nullptr == expr) {
+    return RC::SUCCESS;
+  }
+
+  auto *function_expr = static_cast<FunctionExpr *>(expr.get());
+  for (auto &arg_expr : function_expr->args()) {
+    std::vector<std::unique_ptr<Expression>> child_bound_expressions;
+    RC rc = bind_expression(arg_expr, child_bound_expressions);
+    if (OB_FAIL(rc)) {
+      return rc;
+    }
+
+    if (child_bound_expressions.size() != 1) {
+      LOG_WARN("invalid children number of function expression: %d", child_bound_expressions.size());
+      return RC::INVALID_ARGUMENT;
+    }
+
+    std::unique_ptr<Expression> &bound_arg = child_bound_expressions[0];
+    if (bound_arg.get() != arg_expr.get()) {
+      arg_expr.reset(bound_arg.release());
+    }
+  }
+
+  Value folded_value;
+  if (function_expr->try_get_value(folded_value) == RC::SUCCESS) {
+    auto replacement = std::make_unique<ValueExpr>(folded_value);
+    replacement->set_name(function_expr->name());
+    replacement->set_alias(function_expr->alias_std_string());
+    replacement->set_table_alias(function_expr->table_alias_std_string());
+    bound_expressions.emplace_back(std::move(replacement));
+  } else {
+    bound_expressions.emplace_back(std::move(expr));
+  }
   return RC::SUCCESS;
 }
 

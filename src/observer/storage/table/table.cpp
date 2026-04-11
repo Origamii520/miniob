@@ -111,6 +111,41 @@ RC materialize_record_with_added_column(
   return RC::SUCCESS;
 }
 
+RC materialize_record_without_column(
+    const TableMeta &old_table_meta, const TableMeta &new_table_meta, const Record &old_record, const char *dropped_field_name,
+    vector<char> &new_record)
+{
+  new_record.assign(new_table_meta.record_size(), 0);
+
+  for (int i = 0; i < old_table_meta.sys_field_num(); i++) {
+    const FieldMeta *old_field = old_table_meta.field(i);
+    const FieldMeta *new_field = new_table_meta.field(i);
+    memcpy(new_record.data() + new_field->offset(), old_record.data() + old_field->offset(), old_field->len());
+  }
+
+  Bitmap old_bitmap(old_record.data() + old_table_meta.null_bitmap_start(), visible_field_num(old_table_meta));
+  Bitmap new_bitmap(new_record.data() + new_table_meta.null_bitmap_start(), visible_field_num(new_table_meta));
+
+  for (int i = old_table_meta.sys_field_num(); i < old_table_meta.field_num(); i++) {
+    const FieldMeta *old_field = old_table_meta.field(i);
+    if (strcmp(old_field->name(), dropped_field_name) == 0) {
+      continue;
+    }
+
+    const FieldMeta *new_field = new_table_meta.field(old_field->name());
+    ASSERT(new_field != nullptr, "field must exist in new table meta");
+    memcpy(new_record.data() + new_field->offset(), old_record.data() + old_field->offset(), old_field->len());
+
+    const int old_visible_index = old_field->field_id() - old_table_meta.sys_field_num();
+    const int new_visible_index = new_field->field_id() - new_table_meta.sys_field_num();
+    if (old_bitmap.get_bit(old_visible_index)) {
+      new_bitmap.set_bit(new_visible_index);
+    }
+  }
+
+  return RC::SUCCESS;
+}
+
 void cleanup_indexes(vector<Index *> &indexes)
 {
   for (Index *index : indexes) {
@@ -1141,6 +1176,172 @@ RC Table::add_column(const AttrInfoSqlNode &attr_info)
   }
 
   LOG_INFO("Successfully added column (%s) on table (%s)", attr_info.name.c_str(), name());
+  return RC::SUCCESS;
+}
+
+RC Table::drop_column(const char *field_name)
+{
+  const FieldMeta *field_meta = table_meta_.field(field_name);
+  if (field_meta == nullptr || !field_meta->visible()) {
+    LOG_WARN("field does not exist. table=%s, field=%s", name(), field_name);
+    return RC::SCHEMA_FIELD_NOT_EXIST;
+  }
+
+  if (visible_field_num(table_meta_) <= 1) {
+    LOG_WARN("cannot drop the last visible field. table=%s, field=%s", name(), field_name);
+    return RC::INVALID_ARGUMENT;
+  }
+
+  if (table_meta_.vector_index_num() > 0) {
+    LOG_WARN("alter table drop column does not support tables with vector indexes yet. table=%s", name());
+    return RC::UNIMPLEMENTED;
+  }
+
+  TableMeta old_table_meta(table_meta_);
+  TableMeta new_table_meta(table_meta_);
+  RC        rc = new_table_meta.drop_field(field_name);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to drop field from table meta. table=%s, field=%s, rc=%s", name(), field_name, strrc(rc));
+    return rc;
+  }
+
+  vector<IndexMeta> remained_index_metas;
+  vector<string>    index_names;
+  remained_index_metas.reserve(old_table_meta.index_num());
+  index_names.reserve(old_table_meta.index_num());
+  for (int i = 0; i < old_table_meta.index_num(); i++) {
+    const IndexMeta &index_meta = *old_table_meta.index(i);
+    index_names.push_back(index_meta.name());
+    if (!index_meta.has_field(field_name)) {
+      remained_index_metas.push_back(index_meta);
+    }
+  }
+  new_table_meta.clear_indexes();
+
+  vector<vector<char>> materialized_records;
+  Trx                 *scan_trx = db_->trx_kit().create_trx(db_->log_handler());
+  RecordFileScanner    scanner;
+  rc = get_record_scanner(scanner, scan_trx, ReadWriteMode::READ_ONLY);
+  if (OB_FAIL(rc)) {
+    if (scan_trx != nullptr) {
+      db_->trx_kit().destroy_trx(scan_trx);
+    }
+    LOG_WARN("failed to open scanner while altering table. table=%s, rc=%s", name(), strrc(rc));
+    return rc;
+  }
+
+  Record record;
+  while (OB_SUCC(rc = scanner.next(record))) {
+    vector<char> new_record;
+    rc = materialize_record_without_column(old_table_meta, new_table_meta, record, field_name, new_record);
+    if (OB_FAIL(rc)) {
+      scanner.close_scan();
+      if (scan_trx != nullptr) {
+        db_->trx_kit().destroy_trx(scan_trx);
+      }
+      LOG_WARN("failed to materialize altered record while dropping column. table=%s, rc=%s", name(), strrc(rc));
+      return rc;
+    }
+    materialized_records.emplace_back(std::move(new_record));
+  }
+  scanner.close_scan();
+  if (scan_trx != nullptr) {
+    db_->trx_kit().destroy_trx(scan_trx);
+  }
+
+  if (rc != RC::RECORD_EOF) {
+    LOG_WARN("failed to scan table records while dropping column. table=%s, rc=%s", name(), strrc(rc));
+    return rc;
+  }
+
+  rc = sync();
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to sync table before dropping column. table=%s, rc=%s", name(), strrc(rc));
+    return rc;
+  }
+
+  cleanup_indexes(indexes_);
+  if (record_handler_ != nullptr) {
+    delete record_handler_;
+    record_handler_ = nullptr;
+  }
+  if (data_buffer_pool_ != nullptr) {
+    data_buffer_pool_->close_file();
+    data_buffer_pool_ = nullptr;
+  }
+
+  const string data_file = table_data_file(base_dir_.c_str(), name());
+  if (unlink(data_file.c_str()) == -1) {
+    LOG_WARN("failed to remove old data file. file=%s, errno=%d:%s", data_file.c_str(), errno, strerror(errno));
+    return RC::FILE_REMOVE;
+  }
+  for (const string &index_name : index_names) {
+    const string index_file = table_index_file(base_dir_.c_str(), name(), index_name.c_str());
+    if (unlink(index_file.c_str()) == -1 && errno != ENOENT) {
+      LOG_WARN("failed to remove old index file. file=%s, errno=%d:%s", index_file.c_str(), errno, strerror(errno));
+      return RC::FILE_REMOVE;
+    }
+  }
+
+  BufferPoolManager &bpm = db_->buffer_pool_manager();
+  rc                     = bpm.create_file(data_file.c_str());
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to create new data file while dropping column. file=%s, rc=%s", data_file.c_str(), strrc(rc));
+    return rc;
+  }
+
+  table_meta_.swap(new_table_meta);
+  rc = init_record_handler(base_dir_.c_str());
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to reinit record handler while dropping column. table=%s, rc=%s", name(), strrc(rc));
+    return rc;
+  }
+
+  for (const vector<char> &new_record_data : materialized_records) {
+    Record new_record;
+    rc = new_record.copy_data(new_record_data.data(), static_cast<int>(new_record_data.size()));
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to copy rewritten record while dropping column. table=%s, rc=%s", name(), strrc(rc));
+      return rc;
+    }
+    rc = insert_record(new_record);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to insert rewritten record while dropping column. table=%s, rc=%s", name(), strrc(rc));
+      return rc;
+    }
+  }
+
+  rc = persist_table_meta_to_disk(base_dir_, name(), table_meta_);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to persist altered table meta while dropping column. table=%s, rc=%s", name(), strrc(rc));
+    return rc;
+  }
+
+  for (const IndexMeta &index_meta : remained_index_metas) {
+    vector<const FieldMeta *> field_metas;
+    field_metas.reserve(index_meta.field_metas().size());
+    for (const FieldMeta &indexed_field_meta : index_meta.field_metas()) {
+      const FieldMeta *new_field_meta = table_meta_.field(indexed_field_meta.name());
+      if (new_field_meta == nullptr) {
+        LOG_WARN("failed to find field for rebuilding index while dropping column. table=%s, field=%s",
+            name(),
+            indexed_field_meta.name());
+        return RC::SCHEMA_FIELD_NOT_EXIST;
+      }
+      field_metas.push_back(new_field_meta);
+    }
+
+    rc = create_index(nullptr, field_metas, index_meta.name().c_str(), index_meta.is_unique());
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to rebuild index while dropping column. table=%s, index=%s, rc=%s",
+          name(),
+          index_meta.name().c_str(),
+          strrc(rc));
+      return rc;
+    }
+  }
+
+  LOG_INFO("Successfully dropped column (%s) on table (%s)", field_name, name());
   return RC::SUCCESS;
 }
 

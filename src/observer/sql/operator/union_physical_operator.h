@@ -5,7 +5,7 @@
 class UnionPhysicalOperator : public PhysicalOperator
 {
 public:
-  UnionPhysicalOperator()          = default;
+  explicit UnionPhysicalOperator(bool all = false) : all_(all) {}
   ~UnionPhysicalOperator() override = default;
 
   PhysicalOperatorType type() const override { return PhysicalOperatorType::UNION; }
@@ -23,4 +23,5 @@ private:
 private:
   std::vector<std::unique_ptr<Tuple>> tuples_;
   size_t                              tuple_idx_ = 0;
+  bool                                all_       = false;
 };

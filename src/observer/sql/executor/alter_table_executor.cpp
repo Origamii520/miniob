@@ -13,5 +13,8 @@ RC AlterTableExecutor::execute(SQLStageEvent *sql_event)
       static_cast<int>(stmt->type()));
 
   auto *alter_table_stmt = static_cast<AlterTableStmt *>(stmt);
-  return alter_table_stmt->table()->add_column(alter_table_stmt->attr_info());
+  if (alter_table_stmt->operation() == AlterTableStmt::Operation::ADD_COLUMN) {
+    return alter_table_stmt->table()->add_column(alter_table_stmt->attr_info());
+  }
+  return alter_table_stmt->table()->drop_column(alter_table_stmt->column_name().c_str());
 }

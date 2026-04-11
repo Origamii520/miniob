@@ -49,10 +49,12 @@ RC PredicateRewriteRule::rewrite(std::unique_ptr<LogicalOperator> &oper, bool &c
     for (auto &grand_child_oper : grand_child_opers) {
       oper->add_child(std::move(grand_child_oper));
     }
+    change_made = true;
   } else {
-    child_opers.clear();
+    // 恒 false 时保留 predicate 子树，让执行器自然返回空结果。
+    // 直接清空孩子会把上层 select 误改写成“无 FROM 的常量查询”。
+    change_made = false;
+    return RC::SUCCESS;
   }
-
-  change_made = true;
   return RC::SUCCESS;
 }

@@ -116,6 +116,7 @@ SHOW                                    RETURN_TOKEN(SHOW);
 SYNC                                    RETURN_TOKEN(SYNC);
 SELECT                                  RETURN_TOKEN(SELECT);
 UNION                                   RETURN_TOKEN(UNION);
+ALL                                     RETURN_TOKEN(ALL);
 AS                                      RETURN_TOKEN(AS);
 "INNER JOIN"                            RETURN_TOKEN(INNER_JOIN);
 CALC                                    RETURN_TOKEN(CALC);
@@ -166,6 +167,8 @@ SUM                                     RETURN_TOKEN(SUM);
 LENGTH                                  RETURN_TOKEN(LENGTH);
 TOKENIZE                                RETURN_TOKEN(TOKENIZE);
 STRING_TO_VECTOR                        RETURN_TOKEN(STRING_TO_VECTOR);
+VECTOR_TO_STRING                        RETURN_TOKEN(VECTOR_TO_STRING);
+DISTANCE                                RETURN_TOKEN(DISTANCE);
 
 TEXT                                    RETURN_TOKEN(TEXT_T);
 {ID}                                    yylval->string=strdup(yytext); RETURN_TOKEN(ID);

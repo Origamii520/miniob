@@ -72,6 +72,7 @@ RC UnionStmt::create(Db *db, const UnionSqlNode &sql_node, Stmt *&stmt)
     }
   }
 
-  stmt = new UnionStmt(std::move(left_select_stmt), std::move(right_select_stmt), std::move(left_types));
+  stmt = new UnionStmt(
+      std::move(left_select_stmt), std::move(right_select_stmt), std::move(left_types), sql_node.all);
   return RC::SUCCESS;
 }

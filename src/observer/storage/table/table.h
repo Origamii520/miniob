@@ -97,6 +97,7 @@ public:
   RC create_vector_index(Trx *trx, const FieldMeta *field_meta, const std::string &vector_index_name,
       DistanceType distance_type, size_t lists, size_t probes);
   RC add_column(const AttrInfoSqlNode &attr_info);
+  RC drop_column(const char *field_name);
 
   RC get_record_scanner(RecordFileScanner &scanner, Trx *trx, ReadWriteMode mode);
 
