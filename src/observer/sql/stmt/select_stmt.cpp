@@ -25,6 +25,47 @@ See the Mulan PSL v2 for more details. */
 using namespace std;
 using namespace common;
 
+namespace {
+
+bool contains_aggregate_in_filter_expr(Expression *expr)
+{
+  if (expr == nullptr) {
+    return false;
+  }
+
+  switch (expr->type()) {
+    case ExprType::UNBOUND_AGGREGATION:
+    case ExprType::AGGREGATION: {
+      return true;
+    }
+    case ExprType::ARITHMETIC: {
+      auto *arithmetic_expr = static_cast<ArithmeticExpr *>(expr);
+      return contains_aggregate_in_filter_expr(arithmetic_expr->left().get()) ||
+             contains_aggregate_in_filter_expr(arithmetic_expr->right().get());
+    }
+    case ExprType::LIKE: {
+      auto *like_expr = static_cast<LikeExpr *>(expr);
+      return contains_aggregate_in_filter_expr(like_expr->sExpr().get()) ||
+             contains_aggregate_in_filter_expr(like_expr->pExpr().get());
+    }
+    case ExprType::VECTOR_DISTANCE_EXPR: {
+      auto *vector_distance_expr = static_cast<VectorDistanceExpr *>(expr);
+      return contains_aggregate_in_filter_expr(vector_distance_expr->left().get()) ||
+             contains_aggregate_in_filter_expr(vector_distance_expr->right().get());
+    }
+    case ExprType::IS: {
+      auto *is_expr = static_cast<IsExpr *>(expr);
+      return contains_aggregate_in_filter_expr(is_expr->left().get()) ||
+             contains_aggregate_in_filter_expr(is_expr->right().get());
+    }
+    default: {
+      return false;
+    }
+  }
+}
+
+}  // namespace
+
 SelectStmt::~SelectStmt()
 {
   if (nullptr != filter_stmt_) {
@@ -230,6 +271,12 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
   // 将 conditions 中 **所有** 带有别名的表名替换为真实的表名
   // 将 conditions 中 **所有** 使用别名 field 的表达式替换为真实的字段名
   for (auto &condition : select_sql.conditions) {
+    if (contains_aggregate_in_filter_expr(condition.left_expr.get()) ||
+        contains_aggregate_in_filter_expr(condition.right_expr.get())) {
+      LOG_WARN("aggregate function is not allowed in where clause");
+      return RC::INVALID_ARGUMENT;
+    }
+
     if (condition.left_expr != nullptr) {
       RC rc = convert_alias_to_name(condition.left_expr.get(), alias2name, field_alias2name);
       if (rc != RC::SUCCESS) {
@@ -341,10 +388,12 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
         LOG_WARN("cannot construct subquery stmt");
         return rc;
       }
-      // 检查子查询的合法性：子查询的查询的属性只能有一个
-      RC rc_ = check_sub_select_legal(db, subquery_expr->sub_query_sn());
-      if (rc_ != RC::SUCCESS) {
-        return rc_;
+      // EXISTS/NOT EXISTS 只关心是否有记录，不要求子查询必须返回单列。
+      if (condition.comp_op != CompOp::EXISTS && condition.comp_op != CompOp::NOT_EXISTS) {
+        RC rc_ = check_sub_select_legal(db, subquery_expr->sub_query_sn());
+        if (rc_ != RC::SUCCESS) {
+          return rc_;
+        }
       }
       subquery_expr->set_stmt(unique_ptr<SelectStmt>(static_cast<SelectStmt *>(stmt)));
     }
@@ -364,10 +413,12 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt,
         LOG_WARN("cannot construct subquery stmt");
         return rc;
       }
-      // 检查子查询的合法性：子查询的查询的属性只能有一个
-      RC rc_ = check_sub_select_legal(db, subquery_expr->sub_query_sn());
-      if (rc_ != RC::SUCCESS) {
-        return rc_;
+      if (condition.comp_op != CompOp::EXISTS && condition.comp_op != CompOp::NOT_EXISTS) {
+        // 标量/IN 子查询仍然要求单列结果。
+        RC rc_ = check_sub_select_legal(db, subquery_expr->sub_query_sn());
+        if (rc_ != RC::SUCCESS) {
+          return rc_;
+        }
       }
       subquery_expr->set_stmt(unique_ptr<SelectStmt>(static_cast<SelectStmt *>(stmt)));
     }

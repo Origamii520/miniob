@@ -27,6 +27,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/predicate_logical_operator.h"
 #include "sql/operator/project_logical_operator.h"
 #include "sql/operator/table_get_logical_operator.h"
+#include "sql/operator/union_logical_operator.h"
 #include "sql/operator/group_by_logical_operator.h"
 #include "sql/operator/update_logical_opeator.h"
 #include "sql/operator/order_by_logical_operator.h"
@@ -38,6 +39,7 @@ See the Mulan PSL v2 for more details. */
 #include "sql/stmt/filter_stmt.h"
 #include "sql/stmt/insert_stmt.h"
 #include "sql/stmt/select_stmt.h"
+#include "sql/stmt/union_stmt.h"
 #include "sql/stmt/update_stmt.h"
 #include "sql/stmt/stmt.h"
 
@@ -60,6 +62,12 @@ RC LogicalPlanGenerator::create(Stmt *stmt, unique_ptr<LogicalOperator> &logical
       auto *select_stmt = static_cast<SelectStmt *>(stmt);
 
       rc = create_plan(select_stmt, logical_operator);
+    } break;
+
+    case StmtType::UNION: {
+      auto *union_stmt = static_cast<UnionStmt *>(stmt);
+
+      rc = create_plan(union_stmt, logical_operator);
     } break;
 
     case StmtType::INSERT: {
@@ -214,6 +222,30 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
   }
 
   logical_operator = std::move(project_oper);
+  return RC::SUCCESS;
+}
+
+RC LogicalPlanGenerator::create_plan(UnionStmt *union_stmt, unique_ptr<LogicalOperator> &logical_operator)
+{
+  unique_ptr<LogicalOperator> left_logical_operator;
+  unique_ptr<LogicalOperator> right_logical_operator;
+
+  RC rc = create_plan(union_stmt->left_stmt(), left_logical_operator);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to create left logical plan for union. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  rc = create_plan(union_stmt->right_stmt(), right_logical_operator);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to create right logical plan for union. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  auto union_logical_operator = std::make_unique<UnionLogicalOperator>();
+  union_logical_operator->add_child(std::move(left_logical_operator));
+  union_logical_operator->add_child(std::move(right_logical_operator));
+  logical_operator = std::move(union_logical_operator);
   return RC::SUCCESS;
 }
 

@@ -50,7 +50,7 @@ public:
     }
 
     const ExprPointerType &expression = expressions_[index];
-    spec                              = TupleCellSpec(expression->name());
+    spec                              = TupleCellSpec(expression->display_name());
     return RC::SUCCESS;
   }
 
@@ -66,7 +66,8 @@ public:
 
     rc = RC::NOTFOUND;
     for (const ExprPointerType &expression : expressions_) {
-      if (0 == strcmp(spec.alias(), expression->name())) {
+      if (0 == strcmp(spec.alias(), expression->display_name()) ||
+          0 == strcmp(spec.alias(), expression->name())) {
         rc = get_value(expression, cell);
         break;
       }

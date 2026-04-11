@@ -31,19 +31,25 @@ static const Json::StaticString FIELD_VECTOR_INDEXES("vector_indexes");
 TableMeta::TableMeta(const TableMeta &other)
     : table_id_(other.table_id_),
       name_(other.name_),
+      trx_fields_(other.trx_fields_),
       fields_(other.fields_),
       indexes_(other.indexes_),
       vector_indexes_(other.vector_indexes_),
       storage_format_(other.storage_format_),
+      null_bitmap_start_(other.null_bitmap_start_),
       record_size_(other.record_size_)
 {}
 
 void TableMeta::swap(TableMeta &other) noexcept
 {
+  std::swap(table_id_, other.table_id_);
   name_.swap(other.name_);
+  trx_fields_.swap(other.trx_fields_);
   fields_.swap(other.fields_);
   indexes_.swap(other.indexes_);
   vector_indexes_.swap(other.vector_indexes_);
+  std::swap(storage_format_, other.storage_format_);
+  std::swap(null_bitmap_start_, other.null_bitmap_start_);
   std::swap(record_size_, other.record_size_);
 }
 
@@ -112,10 +118,93 @@ RC TableMeta::init(int32_t table_id, const char *name, const std::vector<FieldMe
   return RC::SUCCESS;
 }
 
+RC TableMeta::add_field(const AttrInfoSqlNode &attr_info)
+{
+  if (common::is_blank(attr_info.name.c_str())) {
+    LOG_WARN("field name cannot be empty");
+    return RC::INVALID_ARGUMENT;
+  }
+  if (field(attr_info.name.c_str()) != nullptr) {
+    LOG_WARN("field already exists. table=%s, field=%s", name(), attr_info.name.c_str());
+    return RC::INVALID_ARGUMENT;
+  }
+
+  const int visible_field_num = static_cast<int>(fields_.size()) - sys_field_num();
+  const int old_bitmap_bytes  = static_cast<int>(std::ceil(visible_field_num / 8.0));
+  const int new_bitmap_bytes  = static_cast<int>(std::ceil((visible_field_num + 1) / 8.0));
+  const int bitmap_delta      = new_bitmap_bytes - old_bitmap_bytes;
+
+  std::vector<FieldMeta> new_fields;
+  new_fields.reserve(fields_.size() + 1);
+
+  for (int i = 0; i < sys_field_num(); i++) {
+    new_fields.push_back(fields_[i]);
+  }
+
+  int next_offset = 0;
+  if (!new_fields.empty()) {
+    const FieldMeta &last_sys_field = new_fields.back();
+    next_offset = last_sys_field.offset() + last_sys_field.len();
+  }
+  null_bitmap_start_ = next_offset;
+  next_offset += new_bitmap_bytes;
+
+  for (size_t i = sys_field_num(); i < fields_.size(); i++) {
+    const FieldMeta &field_meta = fields_[i];
+    FieldMeta        new_field_meta;
+    RC               rc = new_field_meta.init(field_meta.name(),
+          field_meta.type(),
+          field_meta.offset() + bitmap_delta,
+          field_meta.len(),
+          field_meta.visible(),
+          field_meta.field_id(),
+          field_meta.nullable(),
+          field_meta.vector_dim());
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to rebuild field meta. table=%s, field=%s, rc=%s", name(), field_meta.name(), strrc(rc));
+      return rc;
+    }
+    new_field_meta.table_name_ = field_meta.table_name_;
+    new_fields.push_back(new_field_meta);
+    next_offset = new_field_meta.offset() + new_field_meta.len();
+  }
+
+  const int field_len = static_cast<int>(attr_info.arr_len * attr_type_size(attr_info.type));
+  FieldMeta  new_field_meta;
+  RC         rc = new_field_meta.init(attr_info.name.c_str(),
+      attr_info.type,
+      next_offset,
+      field_len,
+      true,
+      sys_field_num() + visible_field_num,
+      attr_info.nullable,
+      attr_info.dim);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to init new field meta. table=%s, field=%s, rc=%s", name(), attr_info.name.c_str(), strrc(rc));
+    return rc;
+  }
+  new_fields.push_back(new_field_meta);
+
+  fields_.swap(new_fields);
+  record_size_ = next_offset + field_len;
+  return RC::SUCCESS;
+}
+
 RC TableMeta::add_index(const IndexMeta &index)
 {
   indexes_.push_back(index);
   return RC::SUCCESS;
+}
+
+RC TableMeta::drop_index(const char *index_name)
+{
+  for (auto iter = indexes_.begin(); iter != indexes_.end(); ++iter) {
+    if (iter->name() == index_name) {
+      indexes_.erase(iter);
+      return RC::SUCCESS;
+    }
+  }
+  return RC::NOT_EXIST;
 }
 
 const char *TableMeta::name() const { return name_.c_str(); }
@@ -223,9 +312,9 @@ int TableMeta::serialize(std::ostream &ss) const
   for (const auto &vector_index : vector_indexes_) {
     Json::Value index_value;
     vector_index.to_json(index_value);
-    indexes_value.append(std::move(index_value));
+    vector_indexes_value.append(std::move(index_value));
   }
-  table_value[FIELD_VECTOR_INDEXES] = std::move(indexes_value);
+  table_value[FIELD_VECTOR_INDEXES] = std::move(vector_indexes_value);
 
   Json::StreamWriterBuilder builder;
   Json::StreamWriter       *writer = builder.newStreamWriter();

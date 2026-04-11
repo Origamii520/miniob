@@ -164,7 +164,7 @@ IF (EXISTS /usr/local/lib64)
     LINK_DIRECTORIES (/usr/local/lib64)
 ENDIF ()
 
-INCLUDE_DIRECTORIES(. ${PROJECT_SOURCE_DIR}/deps /usr/local/include)
+INCLUDE_DIRECTORIES(. ${PROJECT_SOURCE_DIR}/deps /usr/local/include /usr/include/jsoncpp /usr/local/include/jsoncpp)
 
 IF(WITH_UNIT_TESTS)
     IF (ENABLE_COVERAGE)
@@ -193,4 +193,3 @@ ENDIF(WITH_BENCHMARK)
 IF(WITH_UNIT_TESTS)
     ADD_SUBDIRECTORY(unittest)
 ENDIF(WITH_UNIT_TESTS)
-

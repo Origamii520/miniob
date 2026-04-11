@@ -123,6 +123,7 @@ public:
    */
   virtual const char *name() const { return name_.c_str(); }
   virtual void        set_name(std::string name) { name_ = name; }
+  virtual const char *display_name() const { return alias_.empty() ? name_.c_str() : alias_.c_str(); }
 
   /**
    * @brief 表达式在下层算子返回的 chunk 中的位置

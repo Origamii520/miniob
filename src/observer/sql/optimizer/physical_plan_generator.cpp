@@ -42,6 +42,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/hash_group_by_physical_operator.h"
 #include "sql/operator/scalar_group_by_physical_operator.h"
 #include "sql/operator/table_scan_vec_physical_operator.h"
+#include "sql/operator/union_logical_operator.h"
+#include "sql/operator/union_physical_operator.h"
 #include "sql/operator/update_logical_opeator.h"
 #include "sql/operator/update_physical_opeator.h"
 #include "sql/optimizer/physical_plan_generator.h"
@@ -97,6 +99,10 @@ RC PhysicalPlanGenerator::create(LogicalOperator &logical_operator, unique_ptr<P
 
     case LogicalOperatorType::ORDER_BY: {
       return create_plan(static_cast<OrderByLogicalOperator &>(logical_operator), oper);
+    } break;
+
+    case LogicalOperatorType::UNION: {
+      return create_plan(static_cast<UnionLogicalOperator &>(logical_operator), oper);
     } break;
 
     default: {
@@ -662,5 +668,28 @@ RC PhysicalPlanGenerator::create_plan(OrderByLogicalOperator &logical_operator, 
     }
     oper->add_child(std::move(child_oper));
   }
+  return RC::SUCCESS;
+}
+
+RC PhysicalPlanGenerator::create_plan(UnionLogicalOperator &logical_operator, std::unique_ptr<PhysicalOperator> &oper)
+{
+  if (logical_operator.children().size() != 2) {
+    LOG_WARN("union logical operator expects two children. size=%zu", logical_operator.children().size());
+    return RC::INVALID_ARGUMENT;
+  }
+
+  auto union_physical_operator = std::make_unique<UnionPhysicalOperator>();
+  auto children                = std::move(logical_operator.children());
+  for (auto &child : children) {
+    std::unique_ptr<PhysicalOperator> child_oper;
+    RC rc = create(*child, child_oper);
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to create union child physical operator. rc=%s", strrc(rc));
+      return rc;
+    }
+    union_physical_operator->add_child(std::move(child_oper));
+  }
+
+  oper = std::move(union_physical_operator);
   return RC::SUCCESS;
 }

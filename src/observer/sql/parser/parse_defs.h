@@ -212,6 +212,12 @@ struct CreateTableSqlNode
   SubSelectSqlNode*               sub_select = nullptr;            ///< select stmt
 };
 
+struct AlterTableSqlNode
+{
+  std::string   relation_name;
+  AttrInfoSqlNode attr_info;
+};
+
 /**
  * @brief 描述一个drop table语句
  * @ingroup SQLParser
@@ -259,6 +265,12 @@ struct CreateViewSqlNode
   std::vector<std::string> attrs_name;      ///< attributes
   SubSelectSqlNode* sub_select = nullptr;
   std::string description;
+};
+
+struct UnionSqlNode
+{
+  SubSelectSqlNode *left_select  = nullptr;
+  SubSelectSqlNode *right_select = nullptr;
 };
 
 /**
@@ -332,11 +344,13 @@ enum SqlCommandFlag
   SCF_UPDATE,
   SCF_DELETE,
   SCF_CREATE_TABLE,
+  SCF_ALTER_TABLE,
   SCF_DROP_TABLE,
   SCF_CREATE_VIEW,
   SCF_CREATE_INDEX,
   SCF_CREATE_VECTOR_INDEX,
   SCF_DROP_INDEX,
+  SCF_UNION,
   SCF_SYNC,
   SCF_SHOW_TABLES,
   SCF_DESC_TABLE,
@@ -365,11 +379,13 @@ public:
   DeleteSqlNode       deletion;
   UpdateSqlNode       update;
   CreateTableSqlNode  create_table;
+  AlterTableSqlNode   alter_table;
   DropTableSqlNode    drop_table;
   CreateIndexSqlNode  create_index;
   CreateVectorIndexSqlNode create_vector_index;
   DropIndexSqlNode    drop_index;
   CreateViewSqlNode   create_view;
+  UnionSqlNode        union_sql;
   DescTableSqlNode    desc_table;
   LoadDataSqlNode     load_data;
   ExplainSqlNode      explain;

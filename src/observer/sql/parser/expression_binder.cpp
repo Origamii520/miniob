@@ -23,6 +23,39 @@ See the Mulan PSL v2 for more details. */
 using namespace std;
 using namespace common;
 
+namespace {
+
+RC cast_char_literal_for_comparison(unique_ptr<Expression> &expr, AttrType target_type)
+{
+  if (expr == nullptr || expr->type() != ExprType::VALUE || target_type == AttrType::UNDEFINED ||
+      target_type == AttrType::CHARS) {
+    return RC::SUCCESS;
+  }
+
+  auto *value_expr = static_cast<ValueExpr *>(expr.get());
+  const Value &value = value_expr->get_value();
+  if (value.is_null() || value.attr_type() != AttrType::CHARS) {
+    return RC::SUCCESS;
+  }
+
+  Value cast_value;
+  RC    rc = Value::cast_to(value, target_type, cast_value);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to cast char literal to target type. from=%s, to=%s, rc=%s",
+        attr_type_to_string(value.attr_type()), attr_type_to_string(target_type), strrc(rc));
+    return rc;
+  }
+
+  auto replacement = make_unique<ValueExpr>(cast_value);
+  replacement->set_name(expr->name());
+  replacement->set_alias(value_expr->alias_std_string());
+  replacement->set_table_alias(value_expr->table_alias_std_string());
+  expr = std::move(replacement);
+  return RC::SUCCESS;
+}
+
+}  // namespace
+
 Table *BinderContext::find_table(const char *table_name) const
 {
   auto pred = [table_name](Table *table) { return 0 == strcasecmp(table_name, table->name()); };
@@ -346,6 +379,21 @@ RC ExpressionBinder::bind_comparison_expression(
   unique_ptr<Expression> &right = child_bound_expressions[0];
   if (right.get() != right_expr.get()) {
     right_expr.reset(right.release());
+  }
+
+  if (left_expr != nullptr && right_expr != nullptr && left_expr->value_type() != right_expr->value_type()) {
+    if (left_expr->type() == ExprType::VALUE) {
+      rc = cast_char_literal_for_comparison(left_expr, right_expr->value_type());
+      if (OB_FAIL(rc)) {
+        return rc;
+      }
+    }
+    if (right_expr->type() == ExprType::VALUE) {
+      rc = cast_char_literal_for_comparison(right_expr, left_expr->value_type());
+      if (OB_FAIL(rc)) {
+        return rc;
+      }
+    }
   }
 
   bound_expressions.emplace_back(std::move(expr));

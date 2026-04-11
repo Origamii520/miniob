@@ -14,6 +14,53 @@ See the Mulan PSL v2 for more details. */
 #include "common/value.h"
 #include <math.h>
 
+namespace {
+
+bool valid_date_literal(const char *literal)
+{
+  if (literal == nullptr || *literal == '\0') {
+    return false;
+  }
+
+  int  parts[3]   = {0, 0, 0};
+  int  part_index = 0;
+  int  current    = 0;
+  bool has_digit  = false;
+
+  for (const char *p = literal;; ++p) {
+    if (*p >= '0' && *p <= '9') {
+      has_digit = true;
+      current   = current * 10 + (*p - '0');
+      continue;
+    }
+
+    if (*p == '-' || *p == '\0') {
+      if (!has_digit || part_index >= 3) {
+        return false;
+      }
+      parts[part_index++] = current;
+      current             = 0;
+      has_digit           = false;
+      if (*p == '\0') {
+        break;
+      }
+      continue;
+    }
+
+    return false;
+  }
+
+  if (part_index != 3) {
+    return false;
+  }
+
+  Value date_value;
+  date_value.set_date(parts[0] * 10000 + parts[1] * 100 + parts[2]);
+  return date_value.is_date_valid();
+}
+
+}  // namespace
+
 int CharType::compare(const Value &left, const Value &right) const
 {
   // left 是 string。right 是数字的情况，需要将 string 转为数字再比较
@@ -79,6 +126,21 @@ RC CharType::cast_to(const Value &val, AttrType type, Value &result) const
       result.set_text(val.value_.pointer_value_, val.length());
       return RC::SUCCESS;
     }
+    case AttrType::DATES: {
+      if (!valid_date_literal(val.value_.pointer_value_)) {
+        return RC::INVALID_ARGUMENT;
+      }
+      result.set_date(val.value_.pointer_value_);
+      return RC::SUCCESS;
+    }
+    case AttrType::VECTORS: {
+      try {
+        result.set_vector(val.value_.pointer_value_);
+      } catch (...) {
+        return RC::INVALID_ARGUMENT;
+      }
+      return RC::SUCCESS;
+    }
     default: return RC::UNIMPLEMENTED;
   }
   return RC::SUCCESS;
@@ -89,6 +151,9 @@ int CharType::cast_cost(AttrType type)
   // CHARS 可以随意转为 text 类型
   if (type == AttrType::CHARS || type == AttrType::TEXTS) {
     return 0;
+  }
+  if (type == AttrType::DATES || type == AttrType::VECTORS) {
+    return 1;
   }
   return INT32_MAX;
 }

@@ -43,8 +43,11 @@ public:
   RC init(int32_t table_id, const char *name, const std::vector<FieldMeta> *trx_fields,
       std::span<const AttrInfoSqlNode> attributes, StorageFormat storage_format);
 
+  RC add_field(const AttrInfoSqlNode &attr_info);
   RC add_index(const IndexMeta &index);
+  RC drop_index(const char *index_name);
   RC add_vector_index(const VectorIndexMeta &vector_index_meta);
+  void clear_indexes() { indexes_.clear(); }
 
 public:
   int32_t             table_id() const { return table_id_; }

@@ -92,9 +92,11 @@ public:
 
   // TODO refactor
   RC create_index(Trx *trx, const std::vector<const FieldMeta *> &field_metas, const char *index_name, bool is_unique);
+  RC drop_index(const char *index_name);
 
   RC create_vector_index(Trx *trx, const FieldMeta *field_meta, const std::string &vector_index_name,
       DistanceType distance_type, size_t lists, size_t probes);
+  RC add_column(const AttrInfoSqlNode &attr_info);
 
   RC get_record_scanner(RecordFileScanner &scanner, Trx *trx, ReadWriteMode mode);
 

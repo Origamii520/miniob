@@ -47,10 +47,16 @@ RC UpdatePhysicalOperator::open(Trx *trx)
             }
           }
 
-          if (cell.attr_type() != field_metas_[i].type()) {
-
-              LOG_WARN("cannot cast from %s to %s", attr_type_to_string(cell.attr_type()), attr_type_to_string(field_metas_[i].type()));
+          if (!cell.is_null() && cell.attr_type() != field_metas_[i].type()) {
+            Value casted_cell;
+            rc = Value::cast_to(cell, field_metas_[i].type(), casted_cell);
+            if (OB_FAIL(rc)) {
+              LOG_WARN("cannot cast from %s to %s",
+                  attr_type_to_string(cell.attr_type()),
+                  attr_type_to_string(field_metas_[i].type()));
               return RC::INVALID_ARGUMENT;
+            }
+            cell = casted_cell;
           }
           // 检查向量维度是否完全一致
           if (cell.attr_type() == AttrType::VECTORS &&

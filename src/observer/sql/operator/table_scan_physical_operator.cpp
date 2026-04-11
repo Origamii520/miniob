@@ -77,8 +77,6 @@ RC TableScanPhysicalOperator::next()
   } else {
     bool filter_result = false;
     while (OB_SUCC(rc = record_scanner_.next(current_record_))) {
-      LOG_DEBUG("got a record. rid=%s", current_record_.rid().to_string().c_str());
-      
       tuple_.set_record(&current_record_);
       tuple_.set_rid(RID(current_record_.rid()));
       tuple_.set_table_name(table_->name());
@@ -91,10 +89,7 @@ RC TableScanPhysicalOperator::next()
       }
 
       if (filter_result) {
-        sql_debug("get a tuple: %s", tuple_.to_string().c_str());
         break;
-      } else {
-        sql_debug("a tuple is filtered: %s", tuple_.to_string().c_str());
       }
     }
   }
@@ -126,7 +121,6 @@ RC TableScanPhysicalOperator::filter(Tuple &tuple, bool &result)
   Value value;
 
   bool has_true = false;
-  LOG_DEBUG("table_get has %d predicates", predicates_.size());
   for (unique_ptr<Expression> &expr : predicates_) {
     rc = expr->get_value(tuple, value);
     if (rc != RC::SUCCESS) {

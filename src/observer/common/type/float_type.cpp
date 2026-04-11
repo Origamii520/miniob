@@ -116,6 +116,7 @@ RC FloatType::cast_to(const Value &val, AttrType type, Value &result) const
     }
     case AttrType::CHARS: {
       std::string to = common::double_to_str(val.value_.float_value_);
+      result.set_string(to.c_str());
       break;
     }
     default: return RC::UNIMPLEMENTED;

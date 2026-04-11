@@ -21,12 +21,29 @@ FOREACH (F ${ALL_SRC})
 ENDFOREACH (F)
 SET(LIB_SRC ${LIB_SRC} ${BISON_parser_bioson_OUTPUTS} ${FLEX_parser_flex_OUTPUTS})
 
-SET(LIBEVENT_STATIC_LINK TRUE)
-FIND_PACKAGE(Libevent CONFIG REQUIRED)
+find_library(LIBEVENT_CORE_LIBRARY NAMES event_core libevent_core
+    PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu
+    REQUIRED)
+find_library(LIBEVENT_PTHREADS_LIBRARY NAMES event_pthreads libevent_pthreads
+    PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu
+    REQUIRED)
+find_library(JSONCPP_LIBRARY NAMES jsoncpp libjsoncpp
+    PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu
+    REQUIRED)
+
+if (NOT TARGET libevent::core)
+    add_library(libevent::core UNKNOWN IMPORTED)
+    set_target_properties(libevent::core PROPERTIES IMPORTED_LOCATION "${LIBEVENT_CORE_LIBRARY}")
+endif ()
+
+if (NOT TARGET libevent::pthreads)
+    add_library(libevent::pthreads UNKNOWN IMPORTED)
+    set_target_properties(libevent::pthreads PROPERTIES IMPORTED_LOCATION "${LIBEVENT_PTHREADS_LIBRARY}")
+endif ()
 
 # JsonCpp cannot work correctly with FIND_PACKAGE
 
-SET(LIBRARIES common pthread dl libevent::core libevent::pthreads libjsoncpp.a)
+SET(LIBRARIES common pthread dl libevent::core libevent::pthreads ${JSONCPP_LIBRARY})
 
 # 指定目标文件位置
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)

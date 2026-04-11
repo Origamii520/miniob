@@ -172,8 +172,29 @@ ComparisonExpr::~ComparisonExpr() {}
 
 RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &result) const
 {
-  RC  rc         = RC::SUCCESS;
-  int cmp_result = left.compare(right);
+  RC           rc                  = RC::SUCCESS;
+  const Value *left_compare_value  = &left;
+  const Value *right_compare_value = &right;
+  Value        left_cast_value;
+  Value        right_cast_value;
+
+  if (left.attr_type() != right.attr_type()) {
+    if (left.attr_type() == AttrType::CHARS && right.attr_type() != AttrType::CHARS) {
+      rc = Value::cast_to(left, right.attr_type(), left_cast_value);
+      if (OB_FAIL(rc)) {
+        return rc;
+      }
+      left_compare_value = &left_cast_value;
+    } else if (right.attr_type() == AttrType::CHARS && left.attr_type() != AttrType::CHARS) {
+      rc = Value::cast_to(right, left.attr_type(), right_cast_value);
+      if (OB_FAIL(rc)) {
+        return rc;
+      }
+      right_compare_value = &right_cast_value;
+    }
+  }
+
+  int cmp_result = left_compare_value->compare(*right_compare_value);
   result         = false;
   if (cmp_result == INT32_MAX) {
     return RC::SUCCESS;
@@ -286,6 +307,32 @@ RC ComparisonExpr::get_value(const Tuple &tuple, Value &value, Trx *trx) const
     if (rc != RC::SUCCESS) {
       LOG_WARN("ComparisonExpr:Subquery: failed to get value of expression. rc=%s", strrc(rc));
       return rc;
+    }
+
+    if (comp_ == CompOp::EXISTS || comp_ == CompOp::NOT_EXISTS) {
+      subquery_expr->set_trx(trx);
+      rc = subquery_expr->open_physical_operator(const_cast<Tuple *>(&tuple));
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to open subquery physical operator. rc=%s", strrc(rc));
+        return rc;
+      }
+
+      rc = subquery_expr->physical_operator()->next();
+      bool exists = (rc == RC::SUCCESS);
+      if (rc != RC::SUCCESS && rc != RC::RECORD_EOF) {
+        LOG_WARN("failed to execute subquery for exists. rc=%s", strrc(rc));
+        subquery_expr->close_physical_operator();
+        return rc;
+      }
+
+      RC close_rc = subquery_expr->close_physical_operator();
+      if (close_rc != RC::SUCCESS) {
+        LOG_WARN("failed to close physical operator.");
+        return close_rc;
+      }
+
+      value.set_boolean(comp_ == CompOp::EXISTS ? exists : !exists);
+      return RC::SUCCESS;
     }
 
     bool bool_value = false;

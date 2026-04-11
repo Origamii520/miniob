@@ -263,14 +263,16 @@ public:
     }
 
     if (data == nullptr) {
-      if (field_meta->type() == AttrType::TEXTS && !cell.is_null()) {
+      if (cell.is_null()) {
+        memset(this->record_->data() + field_meta->offset(), 0, length);
+      } else if (field_meta->type() == AttrType::TEXTS) {
         TextData text_data = {
             .len = static_cast<size_t>(cell.length()),
             .str = reinterpret_cast<const TextData *>(cell.data())->str,
         };
         table_->dump_text(&text_data);
         memcpy(this->record_->data() + field_meta->offset(), &text_data, length);
-      } else if (field_meta->type() == AttrType::VECTORS && !cell.is_null()) {
+      } else if (field_meta->type() == AttrType::VECTORS) {
         VectorData vector_data = {
             .dim    = static_cast<size_t>(cell.length() / sizeof(float)),
             .vector = reinterpret_cast<const VectorData *>(cell.data())->vector,
@@ -286,14 +288,16 @@ public:
         bitmap->clear_bit(field_meta->field_id());
       }
     } else {
-      if (field_meta->type() == AttrType::TEXTS && !cell.is_null()) {
+      if (cell.is_null()) {
+        memset(data + field_meta->offset(), 0, length);
+      } else if (field_meta->type() == AttrType::TEXTS) {
         TextData text_data = {
             .len = static_cast<size_t>(cell.length()),
             .str = reinterpret_cast<const TextData *>(cell.data())->str,
         };
         table_->dump_text(&text_data);
         memcpy(data + field_meta->offset(), &text_data, length);
-      } else if (field_meta->type() == AttrType::VECTORS && !cell.is_null()) {
+      } else if (field_meta->type() == AttrType::VECTORS) {
         VectorData vector_data = {
             .dim    = static_cast<size_t>(cell.length() / sizeof(float)),
             .vector = reinterpret_cast<const VectorData *>(cell.data())->vector,
@@ -303,7 +307,7 @@ public:
       } else {
         memcpy(data + field_meta->offset(), cell.data(), length);
       }
-      Bitmap new_bitmap(data, null_bitmap_start);
+      Bitmap new_bitmap(data + null_bitmap_start, speces_.size());
       if (cell.is_null()) {
         new_bitmap.set_bit(field_meta->field_id());  // 设置 null bitmap
       } else {
@@ -363,6 +367,8 @@ public:
 
   const Record &record() const { return *record_; }
 
+  const Table *table() const { return table_; }
+
 public:
   // view 多表
   // 在多表的情况下，rowtuple 中的 cell 可能来自不同表的 tuple，他们都有自己的 rid 和 table_name
@@ -418,7 +424,7 @@ public:
 
   RC spec_at(int index, TupleCellSpec &spec) const override
   {
-    spec = TupleCellSpec(expressions_[index]->name());
+    spec = TupleCellSpec(expressions_[index]->display_name());
     return RC::SUCCESS;
   }
 
@@ -533,6 +539,8 @@ public:
 
   void set_left(Tuple *left) { left_ = left; }
   void set_right(Tuple *right) { right_ = right; }
+  Tuple *left() const { return left_; }
+  Tuple *right() const { return right_; }
 
   int cell_num() const override { return left_->cell_num() + right_->cell_num(); }
 

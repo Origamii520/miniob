@@ -25,6 +25,7 @@ bool LogicalOperator::can_generate_vectorized_operator(const LogicalOperatorType
     case LogicalOperatorType::CALC:
     case LogicalOperatorType::DELETE:
     case LogicalOperatorType::INSERT:
+    case LogicalOperatorType::UNION:
         bool_ret = false;
         break;
     
@@ -34,4 +35,3 @@ bool LogicalOperator::can_generate_vectorized_operator(const LogicalOperatorType
     }
     return bool_ret;
 }
-

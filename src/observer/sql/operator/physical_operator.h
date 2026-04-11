@@ -58,6 +58,7 @@ enum class PhysicalOperatorType
   UPDATE,
   ORDER_BY,
   VECTOR_INDEX_SCAN,
+  UNION,
 };
 
 /**

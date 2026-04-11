@@ -45,4 +45,5 @@ private:
   ExpressionTuple<std::unique_ptr<Expression>> tuple_;
   int                                          limit_ = -1;
   int                                          count_ = 0;
+  bool                                         emitted_constant_row_ = false;
 };

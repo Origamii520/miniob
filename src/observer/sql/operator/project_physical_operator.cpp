@@ -26,6 +26,9 @@ ProjectPhysicalOperator::ProjectPhysicalOperator(vector<unique_ptr<Expression>> 
 
 RC ProjectPhysicalOperator::open(Trx *trx)
 {
+  count_                = 0;
+  emitted_constant_row_ = false;
+
   if (children_.empty()) {
     return RC::SUCCESS;
   }
@@ -48,11 +51,24 @@ RC ProjectPhysicalOperator::open(Trx *trx)
 
 RC ProjectPhysicalOperator::next()
 {
-  if (children_.empty() || (limit_ >= 0 && count_ >= limit_)) {
+  if (limit_ >= 0 && count_ >= limit_) {
     return RC::RECORD_EOF;
   }
-  count_++;
-  return children_[0]->next();
+
+  if (children_.empty()) {
+    if (emitted_constant_row_) {
+      return RC::RECORD_EOF;
+    }
+    emitted_constant_row_ = true;
+    count_++;
+    return RC::SUCCESS;
+  }
+
+  RC rc = children_[0]->next();
+  if (rc == RC::SUCCESS) {
+    count_++;
+  }
+  return rc;
 }
 
 RC ProjectPhysicalOperator::close()
@@ -64,6 +80,11 @@ RC ProjectPhysicalOperator::close()
 }
 Tuple *ProjectPhysicalOperator::current_tuple()
 {
+  if (children_.empty()) {
+    tuple_.set_tuple(nullptr);
+    return &tuple_;
+  }
+
   tuple_.set_tuple(children_[0]->current_tuple());
   return &tuple_;
 }
@@ -71,7 +92,7 @@ Tuple *ProjectPhysicalOperator::current_tuple()
 RC ProjectPhysicalOperator::tuple_schema(TupleSchema &schema) const
 {
   for (const unique_ptr<Expression> &expression : expressions_) {
-    schema.append_cell(expression->name());
+    schema.append_cell(expression->display_name());
   }
   return RC::SUCCESS;
 }

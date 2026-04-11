@@ -36,15 +36,21 @@ public:
   RC next() override;
   RC close() override;
 
-  int cell_num() const { return tuples_[0]->cell_num(); }
+  int cell_num() const { return tuples_.empty() ? 0 : tuples_[0].tuple->cell_num(); }
 
   Tuple *current_tuple() override;
 
   RC tuple_schema(TupleSchema &schema) const override;
 
 private:
+  struct SortEntry
+  {
+    std::unique_ptr<Tuple> tuple;
+    std::vector<Value>     order_keys;
+  };
+
   std::vector<std::unique_ptr<Expression>>     order_by_exprs_;  // 排序依赖的表达式
   std::vector<bool>                            order_by_descs_;  // 排序方向
-  std::vector<std::unique_ptr<ValueListTuple>> tuples_;          // 存储排序后的元组
-  size_t                                       tuple_idx_ = 0;       // 当前返回的元组索引，从 1 开始，索引下标的时候要减 1
+  std::vector<SortEntry>                       tuples_;          // 存储排序后的元组和排序键
+  size_t                                       tuple_idx_ = 0;   // 当前返回的元组索引，从 1 开始，索引下标的时候要减 1
 };

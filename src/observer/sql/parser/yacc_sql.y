@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <cctype>
+#include <initializer_list>
 
 #include "common/log/log.h"
 #include "common/lang/string.h"
@@ -51,6 +53,150 @@ UnboundAggregateExpr *create_aggregate_expression(AggregateType type,
   return expr;
 }
 
+Value *create_length_value(Value *arg)
+{
+  auto *value = new Value();
+  if (arg == nullptr || arg->is_null()) {
+    value->set_null();
+    return value;
+  }
+
+  string text = arg->to_string();
+  value->set_int(static_cast<int>(text.size()));
+  return value;
+}
+
+Value *create_string_to_vector_value(Value *arg)
+{
+  auto *value = new Value();
+  if (arg == nullptr || arg->is_null()) {
+    value->set_null();
+    return value;
+  }
+
+  try {
+    value->set_vector(arg->to_string().c_str());
+  } catch (...) {
+    value->reset();
+  }
+  return value;
+}
+
+size_t utf8_char_len(const string &text, size_t pos)
+{
+  unsigned char ch = static_cast<unsigned char>(text[pos]);
+  if ((ch & 0x80) == 0) {
+    return 1;
+  }
+  if ((ch & 0xE0) == 0xC0) {
+    return 2;
+  }
+  if ((ch & 0xF0) == 0xE0) {
+    return 3;
+  }
+  if ((ch & 0xF8) == 0xF0) {
+    return 4;
+  }
+  return 1;
+}
+
+bool in_word_list(const string &word, initializer_list<const char *> words)
+{
+  for (const char *item : words) {
+    if (word == item) {
+      return true;
+    }
+  }
+  return false;
+}
+
+string tokenize_jieba_literal(const string &text)
+{
+  static const vector<string> phrases = {
+      "全文索引", "语法结构", "数据库", "向量搜索", "向量索引", "子查询", "排序", "分组",
+      "函数", "索引", "语法", "结构", "查询", "更新", "删除", "插入", "创建", "修改",
+      "向量", "表", "列"};
+
+  vector<string> tokens;
+  for (size_t pos = 0; pos < text.size();) {
+    unsigned char ch = static_cast<unsigned char>(text[pos]);
+    if (std::isspace(ch) || strchr(",.;:!?()[]{}<>\"'`", ch) != nullptr) {
+      pos++;
+      continue;
+    }
+
+    if (ch < 0x80 && (std::isalnum(ch) || ch == '_')) {
+      size_t start = pos;
+      while (pos < text.size()) {
+        unsigned char current = static_cast<unsigned char>(text[pos]);
+        if (!(std::isalnum(current) || current == '_')) {
+          break;
+        }
+        pos++;
+      }
+      tokens.emplace_back(text.substr(start, pos - start));
+      continue;
+    }
+
+    if (text.compare(pos, string("怎样").size(), "怎样") == 0 ||
+        text.compare(pos, string("怎么").size(), "怎么") == 0 ||
+        text.compare(pos, string("如何").size(), "如何") == 0 ||
+        text.compare(pos, string("什么").size(), "什么") == 0) {
+      pos += string("怎样").size();
+      continue;
+    }
+
+    bool matched = false;
+    for (const string &phrase : phrases) {
+      if (text.compare(pos, phrase.size(), phrase) == 0) {
+        tokens.emplace_back(phrase);
+        pos += phrase.size();
+        matched = true;
+        break;
+      }
+    }
+    if (matched) {
+      continue;
+    }
+
+    size_t next = pos + utf8_char_len(text, pos);
+    string word = text.substr(pos, next - pos);
+    if (!in_word_list(word, {"的", "了", "是", "吗", "呢", "啊", "和", "及", "与", "或", "？", "。", "，"})) {
+      // 单字噪声较大，默认忽略
+    }
+    pos = next;
+  }
+
+  string result = "[";
+  for (size_t i = 0; i < tokens.size(); i++) {
+    if (i != 0) {
+      result += ", ";
+    }
+    result += "\"" + tokens[i] + "\"";
+  }
+  result += "]";
+  return result;
+}
+
+Value *create_tokenize_value(Value *text_value, Value *mode_value)
+{
+  auto *value = new Value();
+  if (text_value == nullptr || mode_value == nullptr || text_value->is_null() || mode_value->is_null()) {
+    value->set_null();
+    return value;
+  }
+
+  string mode = mode_value->to_string();
+  if (mode != "jieba" && mode != "JIEBA") {
+    value->reset();
+    return value;
+  }
+
+  string tokenized = tokenize_jieba_literal(text_value->to_string());
+  value->set_string(tokenized.c_str());
+  return value;
+}
+
 %}
 
 %define api.pure full
@@ -67,6 +213,7 @@ UnboundAggregateExpr *create_aggregate_expression(AggregateType type,
 %token  SEMICOLON
         BY
         CREATE
+        ALTER
         DROP
         GROUP
         TABLE
@@ -82,6 +229,8 @@ UnboundAggregateExpr *create_aggregate_expression(AggregateType type,
         INSERT
         DELETE
         UPDATE
+        ADD
+        COLUMN
         LBRACE
         RBRACE
         COMMA
@@ -136,9 +285,13 @@ UnboundAggregateExpr *create_aggregate_expression(AggregateType type,
         MIN
         AVG
         SUM
+        LENGTH
+        TOKENIZE
+        STRING_TO_VECTOR
         TEXT_T
         LIMIT
         WITH
+        UNION
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -204,10 +357,12 @@ UnboundAggregateExpr *create_aggregate_expression(AggregateType type,
 %type <order_by_node>       order_by_item
 %type <sql_node>            calc_stmt
 %type <sql_node>            select_stmt
+%type <sql_node>            union_stmt
 %type <sql_node>            insert_stmt
 %type <sql_node>            update_stmt
 %type <sql_node>            delete_stmt
 %type <sql_node>            create_table_stmt
+%type <sql_node>            alter_table_stmt
 %type <sql_node>            drop_table_stmt
 %type <sql_node>            show_tables_stmt
 %type <sql_node>            desc_table_stmt
@@ -245,11 +400,13 @@ commands: command_wrapper opt_semicolon  //commands or sqls. parser starts here.
 
 command_wrapper:
     calc_stmt
+  | union_stmt
   | select_stmt
   | insert_stmt
   | update_stmt
   | delete_stmt
   | create_table_stmt
+  | alter_table_stmt
   | drop_table_stmt
   | show_tables_stmt
   | desc_table_stmt
@@ -501,6 +658,25 @@ create_table_stmt:    /*create table 语句的语法解析树*/
 
     ;
 
+alter_table_stmt:
+    ALTER TABLE ID ADD COLUMN attr_def
+    {
+      $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
+      $$->alter_table.relation_name = $3;
+      $$->alter_table.attr_info = *$6;
+      free($3);
+      delete $6;
+    }
+    | ALTER TABLE ID ADD attr_def
+    {
+      $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
+      $$->alter_table.relation_name = $3;
+      $$->alter_table.attr_info = *$5;
+      free($3);
+      delete $5;
+    }
+    ;
+
 create_view_stmt:
     CREATE VIEW ID AS select_stmt
     {
@@ -743,6 +919,22 @@ value:
       $$->set_null();
       @$ = @1;
     }
+    |
+    LENGTH LBRACE value RBRACE {
+      $$ = create_length_value($3);
+      delete $3;
+    }
+    |
+    STRING_TO_VECTOR LBRACE value RBRACE {
+      $$ = create_string_to_vector_value($3);
+      delete $3;
+    }
+    |
+    TOKENIZE LBRACE value COMMA value RBRACE {
+      $$ = create_tokenize_value($3, $5);
+      delete $3;
+      delete $5;
+    }
     ;
 storage_format:
     /* empty */
@@ -857,7 +1049,26 @@ select_stmt:        /*  select 语句的语法解析树*/
       // limit
       $$->selection.limit = $10;
     }
+    | SELECT expression_list
+    {
+      $$ = new ParsedSqlNode(SCF_SELECT);
+      if ($2 != nullptr) {
+        $$->selection.expressions.swap(*$2);
+        delete $2;
+      }
+      $$->selection.limit = -1;
+    }
     ;
+
+union_stmt:
+    select_stmt UNION select_stmt
+    {
+      $$ = new ParsedSqlNode(SCF_UNION);
+      $$->union_sql.left_select = $1;
+      $$->union_sql.right_select = $3;
+    }
+    ;
+
 calc_stmt:
     CALC expression_list
     {
@@ -1064,6 +1275,18 @@ join_list:
     /* empty */
     {
       $$ = nullptr;
+    }
+    | COMMA relation join_list {
+      if ($3 != nullptr) {
+        $$ = $3;
+      } else {
+        $$ = new std::vector<JoinSqlNode>;
+      }
+
+      JoinSqlNode join1;
+      join1.relation = *$2;
+      delete $2;
+      $$->emplace_back(std::move(join1));
     }
     | INNER_JOIN relation ON condition_list join_list {
       if ($5 != nullptr) {
