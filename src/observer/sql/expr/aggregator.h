@@ -43,7 +43,9 @@ public:
   RC evaluate(Value &result) override;
 
 private:
-  int count_;
+  double sum_       = 0;
+  int    count_     = 0;
+  bool   has_value_ = false;
 };
 
 class CountAggregator : public Aggregator
@@ -53,7 +55,7 @@ public:
   RC evaluate(Value &result) override;
 
 private:
-  int count_;
+  int count_ = 0;
 };
 
 class MaxAggregator : public Aggregator

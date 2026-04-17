@@ -98,6 +98,7 @@ public:
       DistanceType distance_type, size_t lists, size_t probes);
   RC add_column(const AttrInfoSqlNode &attr_info);
   RC drop_column(const char *field_name);
+  RC change_column(const char *field_name, const AttrInfoSqlNode &attr_info);
 
   RC get_record_scanner(RecordFileScanner &scanner, Trx *trx, ReadWriteMode mode);
 

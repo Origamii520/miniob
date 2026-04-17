@@ -45,6 +45,7 @@ public:
 
   RC add_field(const AttrInfoSqlNode &attr_info);
   RC drop_field(const char *field_name);
+  RC rename_field(const char *old_field_name, const char *new_field_name);
   RC add_index(const IndexMeta &index);
   RC drop_index(const char *index_name);
   RC add_vector_index(const VectorIndexMeta &vector_index_meta);

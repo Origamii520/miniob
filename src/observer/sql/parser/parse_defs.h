@@ -218,6 +218,7 @@ struct AlterTableSqlNode
   {
     ADD_COLUMN,
     DROP_COLUMN,
+    CHANGE_COLUMN,
   };
 
   std::string   relation_name;

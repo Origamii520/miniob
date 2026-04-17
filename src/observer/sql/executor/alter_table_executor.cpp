@@ -16,5 +16,9 @@ RC AlterTableExecutor::execute(SQLStageEvent *sql_event)
   if (alter_table_stmt->operation() == AlterTableStmt::Operation::ADD_COLUMN) {
     return alter_table_stmt->table()->add_column(alter_table_stmt->attr_info());
   }
-  return alter_table_stmt->table()->drop_column(alter_table_stmt->column_name().c_str());
+  if (alter_table_stmt->operation() == AlterTableStmt::Operation::DROP_COLUMN) {
+    return alter_table_stmt->table()->drop_column(alter_table_stmt->column_name().c_str());
+  }
+  return alter_table_stmt->table()->change_column(
+      alter_table_stmt->column_name().c_str(), alter_table_stmt->attr_info());
 }

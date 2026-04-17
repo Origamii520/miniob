@@ -289,6 +289,7 @@ Value *create_tokenize_value(Value *text_value, Value *mode_value)
         DELETE
         UPDATE
         ADD
+        CHANGE
         COLUMN
         LBRACE
         RBRACE
@@ -345,6 +346,7 @@ Value *create_tokenize_value(Value *text_value, Value *mode_value)
         AVG
         SUM
         LENGTH
+        ROUND
         TOKENIZE
         STRING_TO_VECTOR
         TEXT_T
@@ -757,6 +759,28 @@ alter_table_stmt:
       free($3);
       free($5);
     }
+    | ALTER TABLE ID CHANGE COLUMN ID attr_def
+    {
+      $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
+      $$->alter_table.relation_name = $3;
+      $$->alter_table.operation = AlterTableSqlNode::Operation::CHANGE_COLUMN;
+      $$->alter_table.column_name = $6;
+      $$->alter_table.attr_info = *$7;
+      free($3);
+      free($6);
+      delete $7;
+    }
+    | ALTER TABLE ID CHANGE ID attr_def
+    {
+      $$ = new ParsedSqlNode(SCF_ALTER_TABLE);
+      $$->alter_table.relation_name = $3;
+      $$->alter_table.operation = AlterTableSqlNode::Operation::CHANGE_COLUMN;
+      $$->alter_table.column_name = $5;
+      $$->alter_table.attr_info = *$6;
+      free($3);
+      free($5);
+      delete $6;
+    }
     ;
 
 create_view_stmt:
@@ -1157,6 +1181,20 @@ union_stmt:
       $$->union_sql.right_select = $4;
       $$->union_sql.all = true;
     }
+    | union_stmt UNION select_stmt
+    {
+      $$ = new ParsedSqlNode(SCF_UNION);
+      $$->union_sql.left_select = $1;
+      $$->union_sql.right_select = $3;
+      $$->union_sql.all = false;
+    }
+    | union_stmt UNION ALL select_stmt
+    {
+      $$ = new ParsedSqlNode(SCF_UNION);
+      $$->union_sql.left_select = $1;
+      $$->union_sql.right_select = $4;
+      $$->union_sql.all = true;
+    }
     ;
 
 calc_stmt:
@@ -1242,6 +1280,14 @@ expression:
     | LENGTH LBRACE expression RBRACE
     {
       $$ = create_function_expression(FunctionExpr::Type::LENGTH, {$3}, sql_string, &@$);
+    }
+    | ROUND LBRACE expression RBRACE
+    {
+      $$ = create_function_expression(FunctionExpr::Type::ROUND, {$3}, sql_string, &@$);
+    }
+    | ROUND LBRACE expression COMMA expression RBRACE
+    {
+      $$ = create_function_expression(FunctionExpr::Type::ROUND, {$3, $5}, sql_string, &@$);
     }
     | STRING_TO_VECTOR LBRACE expression RBRACE
     {

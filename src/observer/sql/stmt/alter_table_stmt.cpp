@@ -25,11 +25,23 @@ RC AlterTableStmt::create(Db *db, const AlterTableSqlNode &sql_node, Stmt *&stmt
       LOG_WARN("field already exists. table=%s, field=%s", table->name(), attr_info.name.c_str());
       return RC::INVALID_ARGUMENT;
     }
+  } else if (sql_node.operation == AlterTableSqlNode::Operation::DROP_COLUMN) {
+    const FieldMeta *field_meta = table->table_meta().field(sql_node.column_name.c_str());
+    if (field_meta == nullptr || !field_meta->visible()) {
+      LOG_WARN("field does not exist. table=%s, field=%s", table->name(), sql_node.column_name.c_str());
+      return RC::SCHEMA_FIELD_NOT_EXIST;
+    }
   } else {
     const FieldMeta *field_meta = table->table_meta().field(sql_node.column_name.c_str());
     if (field_meta == nullptr || !field_meta->visible()) {
       LOG_WARN("field does not exist. table=%s, field=%s", table->name(), sql_node.column_name.c_str());
       return RC::SCHEMA_FIELD_NOT_EXIST;
+    }
+
+    if (table->table_meta().field(attr_info.name.c_str()) != nullptr &&
+        attr_info.name != sql_node.column_name) {
+      LOG_WARN("target field already exists. table=%s, field=%s", table->name(), attr_info.name.c_str());
+      return RC::INVALID_ARGUMENT;
     }
   }
 

@@ -1345,6 +1345,93 @@ RC Table::drop_column(const char *field_name)
   return RC::SUCCESS;
 }
 
+RC Table::change_column(const char *field_name, const AttrInfoSqlNode &attr_info)
+{
+  const FieldMeta *old_field_meta = table_meta_.field(field_name);
+  if (old_field_meta == nullptr || !old_field_meta->visible()) {
+    LOG_WARN("field does not exist. table=%s, field=%s", name(), field_name);
+    return RC::SCHEMA_FIELD_NOT_EXIST;
+  }
+
+  if (strcmp(field_name, attr_info.name.c_str()) != 0 && table_meta_.field(attr_info.name.c_str()) != nullptr) {
+    LOG_WARN("target field already exists. table=%s, field=%s", name(), attr_info.name.c_str());
+    return RC::INVALID_ARGUMENT;
+  }
+
+  const int expected_len = static_cast<int>(attr_info.arr_len * attr_type_size(attr_info.type));
+  if (old_field_meta->type() != attr_info.type || old_field_meta->len() != expected_len) {
+    LOG_WARN("change column only supports compatible rename now. table=%s, old=%s, new=%s", name(), field_name,
+        attr_info.name.c_str());
+    return RC::UNIMPLEMENTED;
+  }
+
+  TableMeta new_table_meta(table_meta_);
+  RC        rc = new_table_meta.rename_field(field_name, attr_info.name.c_str());
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to rename field in table meta. table=%s, old=%s, new=%s, rc=%s", name(), field_name,
+        attr_info.name.c_str(), strrc(rc));
+    return rc;
+  }
+
+  std::vector<IndexMeta> renamed_index_metas;
+  renamed_index_metas.reserve(table_meta_.index_num());
+  for (int i = 0; i < table_meta_.index_num(); i++) {
+    const IndexMeta &index_meta = *table_meta_.index(i);
+    std::vector<FieldMeta> renamed_field_metas;
+    renamed_field_metas.reserve(index_meta.field_metas().size());
+    for (const FieldMeta &indexed_field_meta : index_meta.field_metas()) {
+      FieldMeta new_indexed_field_meta(indexed_field_meta);
+      if (strcmp(indexed_field_meta.name(), field_name) == 0) {
+        new_indexed_field_meta.set_name(attr_info.name.c_str());
+      }
+      renamed_field_metas.push_back(new_indexed_field_meta);
+    }
+
+    IndexMeta renamed_index_meta;
+    rc = renamed_index_meta.init(index_meta.name(), renamed_field_metas, index_meta.is_unique());
+    if (OB_FAIL(rc)) {
+      LOG_WARN("failed to rebuild renamed index meta. table=%s, index=%s, rc=%s", name(), index_meta.name().c_str(),
+          strrc(rc));
+      return rc;
+    }
+    renamed_index_metas.push_back(std::move(renamed_index_meta));
+  }
+
+  new_table_meta.clear_indexes();
+  for (const IndexMeta &renamed_index_meta : renamed_index_metas) {
+    rc = new_table_meta.add_index(renamed_index_meta);
+    if (OB_FAIL(rc)) {
+      return rc;
+    }
+  }
+
+  rc = persist_table_meta_to_disk(base_dir_, name(), new_table_meta);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to persist changed table meta. table=%s, old=%s, new=%s, rc=%s", name(), field_name,
+        attr_info.name.c_str(), strrc(rc));
+    return rc;
+  }
+
+  cleanup_indexes(indexes_);
+  table_meta_.swap(new_table_meta);
+  for (int i = 0; i < table_meta_.index_num(); i++) {
+    const IndexMeta *index_meta = table_meta_.index(i);
+    auto            *index      = new BplusTreeIndex();
+    std::string      index_file = table_index_file(base_dir_.c_str(), name(), index_meta->name().c_str());
+    rc                          = index->open(this, index_file.c_str(), *index_meta);
+    if (OB_FAIL(rc)) {
+      delete index;
+      LOG_WARN("failed to reopen index after changing column. table=%s, index=%s, rc=%s", name(),
+          index_meta->name().c_str(), strrc(rc));
+      return rc;
+    }
+    indexes_.push_back(index);
+  }
+
+  LOG_INFO("Successfully changed column (%s -> %s) on table (%s)", field_name, attr_info.name.c_str(), name());
+  return RC::SUCCESS;
+}
+
 VectorIndex *Table::find_vector_index(const char *index_name) const
 {
   for (auto index : vector_indexes_) {

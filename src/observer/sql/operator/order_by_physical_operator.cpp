@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include <utility>
 
 #include "common/log/log.h"
+#include "sql/expr/composite_tuple.h"
 #include "storage/record/record.h"
 #include "storage/table/table.h"
 
@@ -124,26 +125,29 @@ public:
   std::vector<std::string> table_name_list_;
 };
 
-class MaterializedJoinedTuple final : public Tuple
+RC append_materialized_tuple(const Tuple &tuple, CompositeTuple &composite_tuple)
 {
-public:
-  MaterializedJoinedTuple(unique_ptr<Tuple> left, unique_ptr<Tuple> right)
-      : left_(std::move(left)), right_(std::move(right))
-  {
-    joined_.set_left(left_.get());
-    joined_.set_right(right_.get());
+  if (const auto *row_tuple = dynamic_cast<const RowTuple *>(&tuple); row_tuple != nullptr) {
+    composite_tuple.add_tuple(make_unique<MaterializedRowTuple>(*row_tuple));
+    return RC::SUCCESS;
   }
 
-  int cell_num() const override { return joined_.cell_num(); }
-  RC  cell_at(int index, Value &cell) const override { return joined_.cell_at(index, cell); }
-  RC  spec_at(int index, TupleCellSpec &spec) const override { return joined_.spec_at(index, spec); }
-  RC  find_cell(const TupleCellSpec &spec, Value &cell) const override { return joined_.find_cell(spec, cell); }
+  if (const auto *joined_tuple = dynamic_cast<const JoinedTuple *>(&tuple); joined_tuple != nullptr) {
+    RC rc = append_materialized_tuple(*joined_tuple->left(), composite_tuple);
+    if (OB_FAIL(rc)) {
+      return rc;
+    }
+    return append_materialized_tuple(*joined_tuple->right(), composite_tuple);
+  }
 
-private:
-  unique_ptr<Tuple> left_;
-  unique_ptr<Tuple> right_;
-  JoinedTuple       joined_;
-};
+  ValueListTuple value_list_tuple;
+  RC             rc = ValueListTuple::make(tuple, value_list_tuple);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+  composite_tuple.add_tuple(make_unique<ValueListTuple>(std::move(value_list_tuple)));
+  return RC::SUCCESS;
+}
 
 unique_ptr<Tuple> materialize_tuple(const Tuple &tuple)
 {
@@ -151,9 +155,14 @@ unique_ptr<Tuple> materialize_tuple(const Tuple &tuple)
     return make_unique<MaterializedRowTuple>(*row_tuple);
   }
 
-  if (const auto *joined_tuple = dynamic_cast<const JoinedTuple *>(&tuple); joined_tuple != nullptr) {
-    return make_unique<MaterializedJoinedTuple>(
-        materialize_tuple(*joined_tuple->left()), materialize_tuple(*joined_tuple->right()));
+  if (dynamic_cast<const JoinedTuple *>(&tuple) != nullptr) {
+    auto composite_tuple = make_unique<CompositeTuple>();
+    RC   rc              = append_materialized_tuple(tuple, *composite_tuple);
+    if (OB_FAIL(rc)) {
+      LOG_PANIC("failed to materialize tuple for order by. rc=%s", strrc(rc));
+      return nullptr;
+    }
+    return composite_tuple;
   }
 
   ValueListTuple value_list_tuple;

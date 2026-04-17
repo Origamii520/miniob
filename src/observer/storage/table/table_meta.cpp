@@ -260,6 +260,35 @@ RC TableMeta::drop_field(const char *field_name)
   return RC::SUCCESS;
 }
 
+RC TableMeta::rename_field(const char *old_field_name, const char *new_field_name)
+{
+  if (common::is_blank(old_field_name) || common::is_blank(new_field_name)) {
+    LOG_WARN("field name cannot be empty");
+    return RC::INVALID_ARGUMENT;
+  }
+
+  const FieldMeta *old_field = field(old_field_name);
+  if (old_field == nullptr || !old_field->visible()) {
+    LOG_WARN("field does not exist. table=%s, field=%s", name(), old_field_name);
+    return RC::SCHEMA_FIELD_NOT_EXIST;
+  }
+
+  const FieldMeta *new_field = field(new_field_name);
+  if (new_field != nullptr && strcmp(old_field_name, new_field_name) != 0) {
+    LOG_WARN("field already exists. table=%s, field=%s", name(), new_field_name);
+    return RC::INVALID_ARGUMENT;
+  }
+
+  for (FieldMeta &field_meta : fields_) {
+    if (strcmp(field_meta.name(), old_field_name) == 0) {
+      field_meta.set_name(new_field_name);
+      return RC::SUCCESS;
+    }
+  }
+
+  return RC::SCHEMA_FIELD_NOT_EXIST;
+}
+
 RC TableMeta::add_index(const IndexMeta &index)
 {
   indexes_.push_back(index);

@@ -524,6 +524,7 @@ public:
   enum class Type
   {
     LENGTH,
+    ROUND,
     STRING_TO_VECTOR,
     TOKENIZE,
     VECTOR_TO_STRING,
@@ -569,6 +570,7 @@ public:
   AttrType                     value_type() const override;
   int                          value_length() const override;
   RC                           get_value(const Tuple &tuple, Value &value, Trx *trx = nullptr) const override;
+  RC                           try_get_value(Value &value) const override;
   std::unique_ptr<Expression> &left();
   std::unique_ptr<Expression> &right();
 

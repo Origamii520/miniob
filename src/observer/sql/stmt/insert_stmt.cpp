@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 #include "common/log/log.h"
 #include "storage/db/db.h"
 #include "storage/table/table.h"
+#include "storage/table/view.h"
 
 InsertStmt::InsertStmt(Table *table, const Value *values, int value_amount)
     : table_(table), values_(values), value_amount_(value_amount)
@@ -37,35 +38,13 @@ RC InsertStmt::create(Db *db, InsertSqlNode &inserts, Stmt *&stmt)
     return RC::SCHEMA_TABLE_NOT_EXIST;
   }
 
-  
-  // if (table->is_view()) {
-  //   auto *view = static_cast<View *>(table);
-  //   // 带聚合等的 View 不可插入
-  //   if (!view->is_updatable()) {
-  //     LOG_WARN("the target table(view) of the INSERT is not insertable-into");
-  //     return RC::INVALID_ARGUMENT;
-  //   }
-
-  //   // 有 join 的，如果没有 attrs_name，不可插入~
-  //   if (inserts.attrs_name.empty() && view->base_tables().size() > 1) {
-  //     LOG_WARN("Can not insert into join view without fields list");
-  //     return RC::INVALID_ARGUMENT;
-  //   }
-
-  //   // 有 join 的，不可以同时插入多个表的数据
-  //   std::string test_table_name;
-  //   for (auto &attr_name : inserts.attrs_name) {
-  //     if (test_table_name != "") {
-  //       if (view->find_base_table_name(attr_name) != test_table_name) {
-  //         LOG_WARN("Can not insert into join view with fields from multiple tables");
-  //         return RC::INVALID_ARGUMENT;
-  //       }
-  //     } else {
-  //       test_table_name = view->find_base_table_name(attr_name);
-  //     }
-  //   }
-
-  // }
+  if (table->is_view()) {
+    auto *view = static_cast<View *>(table);
+    if (!view->is_updatable()) {
+      LOG_WARN("the target table(view) of the INSERT is not insertable-into");
+      return RC::INVALID_ARGUMENT;
+    }
+  }
 
   // check the fields number
   Value           *values     = inserts.values.data();

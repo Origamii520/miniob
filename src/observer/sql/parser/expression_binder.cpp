@@ -28,7 +28,7 @@ namespace {
 RC cast_char_literal_for_comparison(unique_ptr<Expression> &expr, AttrType target_type)
 {
   if (expr == nullptr || expr->type() != ExprType::VALUE || target_type == AttrType::UNDEFINED ||
-      target_type == AttrType::CHARS) {
+      target_type == AttrType::CHARS || target_type == AttrType::NULLS) {
     return RC::SUCCESS;
   }
 
@@ -720,7 +720,16 @@ RC ExpressionBinder::bind_vector_distance_expression(
     right.reset(rightBoundedExpr.release());
   }
 
-  bound_expressions.emplace_back(std::move(expr));
+  Value folded_value;
+  if (vde->try_get_value(folded_value) == RC::SUCCESS) {
+    auto replacement = std::make_unique<ValueExpr>(folded_value);
+    replacement->set_name(vde->name());
+    replacement->set_alias(vde->alias_std_string());
+    replacement->set_table_alias(vde->table_alias_std_string());
+    bound_expressions.emplace_back(std::move(replacement));
+  } else {
+    bound_expressions.emplace_back(std::move(expr));
+  }
   return RC::SUCCESS;
 }
 

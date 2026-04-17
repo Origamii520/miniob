@@ -230,13 +230,13 @@ RC LogicalPlanGenerator::create_plan(UnionStmt *union_stmt, unique_ptr<LogicalOp
   unique_ptr<LogicalOperator> left_logical_operator;
   unique_ptr<LogicalOperator> right_logical_operator;
 
-  RC rc = create_plan(union_stmt->left_stmt(), left_logical_operator);
+  RC rc = create(union_stmt->left_stmt(), left_logical_operator);
   if (OB_FAIL(rc)) {
     LOG_WARN("failed to create left logical plan for union. rc=%s", strrc(rc));
     return rc;
   }
 
-  rc = create_plan(union_stmt->right_stmt(), right_logical_operator);
+  rc = create(union_stmt->right_stmt(), right_logical_operator);
   if (OB_FAIL(rc)) {
     LOG_WARN("failed to create right logical plan for union. rc=%s", strrc(rc));
     return rc;

@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "sql/expr/aggregator.h"
+#include <cmath>
 #include "common/log/log.h"
 
 RC SumAggregator::accumulate(const Value &value)
@@ -53,22 +54,15 @@ RC AvgAggregator::accumulate(const Value &value)
     return RC::SUCCESS;
   }
 
-  if (value_.attr_type() == AttrType::UNDEFINED) {
-    value_ = value;
-    count_ = 1;
-    return RC::SUCCESS;
-  }
-
-  ASSERT(value.attr_type() == value_.attr_type(), "type mismatch. value type: %s, value_.type: %s", 
+  if (!has_value_) {
+    value_     = value;
+    has_value_ = true;
+  } else {
+    ASSERT(value.attr_type() == value_.attr_type(), "type mismatch. value type: %s, value_.type: %s",
         attr_type_to_string(value.attr_type()), attr_type_to_string(value_.attr_type()));
-
-  Value sum_value;
-  RC    rc = Value::add(value, value_, sum_value);
-  if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to add value. rc=%s", strrc(rc));
-    return rc;
   }
-  value_ = sum_value;
+
+  sum_ += static_cast<double>(value.get_float());
   count_++;
   return RC::SUCCESS;
 }
@@ -79,10 +73,9 @@ RC AvgAggregator::evaluate(Value &result)
     result.set_null();
     return RC::SUCCESS;
   }
-  Value divisor;
-  divisor.set_int(count_);
-  result.set_float(0);
-  Value::divide(value_, divisor, result);
+
+  const double avg = std::round((sum_ / count_) * 10000.0) / 10000.0;
+  result.set_float(static_cast<float>(avg));
   return RC::SUCCESS;
 }
 

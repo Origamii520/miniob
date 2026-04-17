@@ -313,6 +313,13 @@ RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &re
   Value        left_cast_value;
   Value        right_cast_value;
 
+  // SQL ordinary comparisons involving NULL should not raise an error here.
+  // `IS [NOT] NULL` has its own dedicated expression type.
+  if (left.is_null() || right.is_null()) {
+    result = false;
+    return RC::SUCCESS;
+  }
+
   if (left.attr_type() != right.attr_type()) {
     if (left.attr_type() == AttrType::CHARS && right.attr_type() != AttrType::CHARS) {
       rc = Value::cast_to(left, right.attr_type(), left_cast_value);
@@ -1223,6 +1230,7 @@ AttrType FunctionExpr::value_type() const
 {
   switch (function_type_) {
     case Type::LENGTH: return AttrType::INTS;
+    case Type::ROUND: return AttrType::FLOATS;
     case Type::STRING_TO_VECTOR: return AttrType::VECTORS;
     case Type::TOKENIZE:
     case Type::VECTOR_TO_STRING: return AttrType::CHARS;
@@ -1234,6 +1242,7 @@ int FunctionExpr::value_length() const
 {
   switch (function_type_) {
     case Type::LENGTH: return sizeof(int);
+    case Type::ROUND: return sizeof(float);
     case Type::STRING_TO_VECTOR: {
       if (!args_.empty() && args_[0] != nullptr && args_[0]->value_length() > 0) {
         return args_[0]->value_length();
@@ -1258,6 +1267,32 @@ RC FunctionExpr::evaluate(const vector<Value> &args, Value &value) const
         return RC::SUCCESS;
       }
       value.set_int(static_cast<int>(args[0].to_string().size()));
+      return RC::SUCCESS;
+    }
+    case Type::ROUND: {
+      if (args.empty() || args.size() > 2) {
+        return RC::INVALID_ARGUMENT;
+      }
+      if (args[0].is_null() || (args.size() == 2 && args[1].is_null())) {
+        value.set_null();
+        return RC::SUCCESS;
+      }
+      if (args[0].attr_type() != AttrType::INTS && args[0].attr_type() != AttrType::FLOATS) {
+        return RC::INVALID_ARGUMENT;
+      }
+
+      int precision = 0;
+      if (args.size() == 2) {
+        if (args[1].attr_type() != AttrType::INTS && args[1].attr_type() != AttrType::FLOATS) {
+          return RC::INVALID_ARGUMENT;
+        }
+        precision = args[1].get_int();
+      }
+      precision = std::clamp(precision, 0, 9);
+
+      const double scale   = std::pow(10.0, precision);
+      const double rounded = std::round(static_cast<double>(args[0].get_float()) * scale) / scale;
+      value.set_float(static_cast<float>(rounded));
       return RC::SUCCESS;
     }
     case Type::STRING_TO_VECTOR: {
@@ -1416,6 +1451,33 @@ RC VectorDistanceExpr::get_value(const Tuple &tuple, Value &value, Trx *trx) con
     }
   }
   return RC::SUCCESS;
+}
+
+RC VectorDistanceExpr::try_get_value(Value &value) const
+{
+  Value left_value;
+  Value right_value;
+  RC    rc = left_->try_get_value(left_value);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+
+  rc = right_->try_get_value(right_value);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+
+  class ConstantDistanceTuple final : public Tuple
+  {
+  public:
+    int cell_num() const override { return 0; }
+    RC  cell_at(int, Value &) const override { return RC::NOTFOUND; }
+    RC  spec_at(int, TupleCellSpec &) const override { return RC::NOTFOUND; }
+    RC  find_cell(const TupleCellSpec &, Value &) const override { return RC::NOTFOUND; }
+  };
+
+  ConstantDistanceTuple tuple;
+  return get_value(tuple, value, nullptr);
 }
 
 std::unique_ptr<Expression> &VectorDistanceExpr::left() { return left_; }

@@ -14,7 +14,6 @@ See the Mulan PSL v2 for more details. */
 
 #include "common/lang/string.h"
 
-#include <cmath>
 #include <ctype.h>
 #include <errno.h>
 #include <string.h>
@@ -270,14 +269,14 @@ char *substr(const char *s, int n1, int n2)
  */
 string double_to_str(double v)
 {
-  // Hidden evaluation expects decimal display to keep at most two digits
-  // without rounding .005 upward. Normalize tiny binary noise first, then
-  // truncate to two decimals before trimming trailing zeros.
-  long double normalized = std::round(static_cast<long double>(v) * 10000.0L) / 10000.0L;
-  long double truncated  = normalized >= 0 ? std::floor(normalized * 100.0L) / 100.0L
-                                           : std::ceil(normalized * 100.0L) / 100.0L;
   char buf[256];
-  snprintf(buf, sizeof(buf), "%.2Lf", truncated);
+  double adjusted = v;
+  if (v > 0) {
+    adjusted += 1e-7;
+  } else if (v < 0) {
+    adjusted -= 1e-7;
+  }
+  snprintf(buf, sizeof(buf), "%.2f", adjusted);
   size_t len = strlen(buf);
   while (buf[len - 1] == '0') {
     len--;
